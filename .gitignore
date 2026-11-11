@@ -1,0 +1,22 @@
+# Gradle / build
+.gradle/
+build/
+*/build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Generated: the guest apk is built by :guest and copied in by :app
+app/src/main/assets/guest.apk
+
+# Output
+*.apk
+*.aar
+*.ap_
+*.dex
+
+# OS
+.DS_Store

@@ -1,0 +1,3 @@
+include ':app'      // the shell: boots the engine, hosts the UI
+include ':engine'   // the engine itself (forked VirtualApp lib) — most work lands here
+include ':guest'    // dependency-free test app, installed into the container

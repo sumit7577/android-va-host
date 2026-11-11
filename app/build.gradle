@@ -1,0 +1,45 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'dev.bello.vahost'
+    compileSdk 37
+
+    defaultConfig {
+        applicationId "dev.bello.vahost"
+        minSdk 21
+        // 23 on purpose: the lowest Android 14+ will still install. Hidden-API
+        // enforcement is keyed to targetSdk, so a low target gives this 2017
+        // engine its best chance of booting. Raise it later, deliberately.
+        targetSdk 24
+        versionCode 1
+        versionName "1.0"
+        // The engine .so is 32-bit only (arm64 blocked by the __NR_* syscalls),
+        // so the whole app must run 32-bit.
+        ndk { abiFilters "armeabi-v7a" }
+    }
+
+    buildTypes { debug { debuggable true; minifyEnabled false } }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    lint { abortOnError false }
+    packaging { jniLibs { useLegacyPackaging = true } }
+}
+
+dependencies {
+    // Direct module dependency: no more copying an aar between projects,
+    // so the engine can never be stale relative to the shell.
+    implementation project(':engine')
+}
+
+// The test guest ships inside the shell as an asset, ready for installPackage.
+def copyGuestApk = tasks.register('copyGuestApk', Copy) {
+    dependsOn ':guest:assembleDebug'
+    from(project(':guest').layout.buildDirectory.file('outputs/apk/debug/guest-debug.apk'))
+    into file('src/main/assets')
+    rename { 'guest.apk' }
+}
+tasks.named('preBuild') { dependsOn copyGuestApk }
+tasks.matching { it.name.startsWith('merge') && it.name.endsWith('Assets') }
+     .configureEach { dependsOn copyGuestApk }

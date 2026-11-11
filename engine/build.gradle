@@ -1,0 +1,41 @@
+apply plugin: 'com.android.library'
+
+android {
+    namespace "com.lody.virtual"
+    compileSdk 37
+    ndkVersion "27.1.12297006"
+    
+
+    defaultConfig {
+        minSdk 21
+        targetSdk 35
+        versionCode 1
+        versionName "1.0"
+        externalNativeBuild {
+            ndkBuild {
+                // arm64/x86_64 added: the 2017 tree shipped 32-bit only.
+                abiFilters "armeabi-v7a"
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    externalNativeBuild {
+        ndkBuild { path file("src/main/jni/Android.mk") }
+    }
+
+    lint { abortOnError false }
+
+    // AGP 8+ turns AIDL off by default; this tree has 47 .aidl files,
+    // including the framework interfaces it reimplements.
+    buildFeatures { aidl true }
+}
+
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+}

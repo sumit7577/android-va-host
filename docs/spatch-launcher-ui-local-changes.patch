@@ -1,0 +1,325 @@
+diff --git a/app/build.gradle b/app/build.gradle
+index 2b4af16..1bb7c8d 100644
+--- a/app/build.gradle
++++ b/app/build.gradle
+@@ -1,34 +1,49 @@
+ apply plugin: 'com.android.application'
++// NOTE: no Kotlin plugin on purpose — AGP 9 has built-in Kotlin support and
++// rejects org.jetbrains.kotlin.android. The vendor tree is correct here.
+ 
+ android {
+     compileSdk 37
++    namespace 'com.android.launcher'
++
+     defaultConfig {
+         applicationId "net_62v.launcher"
+-        minSdkVersion 21
++        minSdk 21
+         targetSdk 37
+         versionCode 1
+         versionName "1.0"
+-        android {
+-            defaultConfig {
+-                ndk {
+-                    abiFilters "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
+-                }
+-            }
++        // FORK: lifted out of the vendor's nested `android { defaultConfig { ndk } }`.
++        ndk {
++            abiFilters "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
+         }
+-        splits {
+-            abi {
+-                enable true
+-                reset()
+-                include 'x86', 'x86_64', 'armeabi-v7a', "arm64-v8a"
+-                universalApk true
+-            }
++    }
++
++    // FORK: lifted out of defaultConfig, where `splits` does not belong.
++    splits {
++        abi {
++            enable true
++            reset()
++            include 'x86', 'x86_64', 'armeabi-v7a', "arm64-v8a"
++            universalApk true
+         }
+     }
++
++    // FORK: the engine SDK is a closed binary drop-in. `stub` compiles against
++    // local no-op shims so the tree builds without it; `real` expects the
++    // vendor .aar in app/libs and must NOT see the shims.
++    flavorDimensions += "engine"
++    productFlavors {
++        stub { dimension "engine" }
++        real { dimension "engine" }
++    }
++
+     buildTypes {
+         debug {
+-            debuggable false
+-            minifyEnabled true
+-            shrinkResources true
++            // FORK: vendor's "debug" was release-equivalent (debuggable false,
++            // minify + shrink on). Instrumenting the bridge needs a real debug build.
++            debuggable true
++            minifyEnabled false
++            shrinkResources false
+             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+         }
+         release {
+@@ -37,23 +52,26 @@ android {
+             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+         }
+     }
++
+     compileOptions {
+         sourceCompatibility JavaVersion.VERSION_21
+         targetCompatibility JavaVersion.VERSION_21
+     }
+-    packagingOptions {
++
++    // FORK: `packagingOptions` -> `packaging` (renamed in AGP 8, gone in 9).
++    packaging {
+         jniLibs {
+             useLegacyPackaging = true
+         }
+     }
++
+     lint {
+         abortOnError false
+         checkReleaseBuilds false
+     }
+-    kotlinOptions {
+-        jvmTarget = '21'
+-    }
+-    namespace 'com.android.launcher'
++
++    // FORK: vendor had `kotlinOptions { jvmTarget '21' }` here, but AGP 9's
++    // built-in Kotlin removed that DSL; jvmTarget now follows compileOptions.
+     buildFeatures {
+         buildConfig true
+     }
+diff --git a/app/build.gradle.orig b/app/build.gradle.orig
+new file mode 100644
+index 0000000..2b4af16
+--- /dev/null
++++ b/app/build.gradle.orig
+@@ -0,0 +1,66 @@
++apply plugin: 'com.android.application'
++
++android {
++    compileSdk 37
++    defaultConfig {
++        applicationId "net_62v.launcher"
++        minSdkVersion 21
++        targetSdk 37
++        versionCode 1
++        versionName "1.0"
++        android {
++            defaultConfig {
++                ndk {
++                    abiFilters "armeabi-v7a", "x86", "arm64-v8a", "x86_64"
++                }
++            }
++        }
++        splits {
++            abi {
++                enable true
++                reset()
++                include 'x86', 'x86_64', 'armeabi-v7a', "arm64-v8a"
++                universalApk true
++            }
++        }
++    }
++    buildTypes {
++        debug {
++            debuggable false
++            minifyEnabled true
++            shrinkResources true
++            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
++        }
++        release {
++            minifyEnabled true
++            shrinkResources true
++            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
++        }
++    }
++    compileOptions {
++        sourceCompatibility JavaVersion.VERSION_21
++        targetCompatibility JavaVersion.VERSION_21
++    }
++    packagingOptions {
++        jniLibs {
++            useLegacyPackaging = true
++        }
++    }
++    lint {
++        abortOnError false
++        checkReleaseBuilds false
++    }
++    kotlinOptions {
++        jvmTarget = '21'
++    }
++    namespace 'com.android.launcher'
++    buildFeatures {
++        buildConfig true
++    }
++}
++
++dependencies {
++    implementation fileTree(include: ['*.jar'], dir: 'libs')
++    implementation fileTree(include: ['*.aar'], dir: 'libs')
++    implementation 'com.jakewharton.android.repackaged:dalvik-dx:14.0.0_r21'
++}
+diff --git a/app/src/stub/kotlin/net_62v/external/MundoStubs.kt b/app/src/stub/kotlin/net_62v/external/MundoStubs.kt
+new file mode 100644
+index 0000000..5029ca3
+--- /dev/null
++++ b/app/src/stub/kotlin/net_62v/external/MundoStubs.kt
+@@ -0,0 +1,75 @@
++/*
++ * FORK-LOCAL SHIMS — not vendor code, not the engine.
++ *
++ * The Mundo SDK (net_62v.external.*) is a closed binary .aar. This file exists
++ * only so the `stub` flavor compiles and installs without it: every member is a
++ * logged no-op. The launcher UI runs; nothing is virtualized.
++ *
++ * Surface below is derived from the four real call sites in this tree:
++ *   LauncherLoader.kt            MetaCore.registerCoreCallback
++ *                                MetaPackageManager.getLaunchIntentForPackage
++ *   Launcher.java:438, 2029      MetaPackageManager.acquireObtainAppSplash
++ *                                MetaActivityManager.obtainSplashLaunchIntent
++ *   Launcher.java:2133-2135      MetaPackageManager.isInnerAppInstalled
++ *                                MetaPackageManager.uninstallAppFully
++ *   LauncherModel.java:2123      MetaPackageManager.acquireObtainAppSplash
++ *   AppsCustomizePagedView:528   MetaActivityManager.obtainSplashLaunchIntent
++ *
++ * When the vendor .aar lands in app/libs, build the `real` flavor instead —
++ * this source set is excluded from it, so there is no duplicate class.
++ */
++package net_62v.external
++
++import android.content.Context
++import android.content.Intent
++import android.os.Handler
++import android.os.Looper
++import android.os.SystemClock
++import android.util.Log
++
++private const val TAG = "MetaStub"
++
++object MetaCore {
++    @JvmStatic
++    fun registerCoreCallback(serviceCallback: () -> Unit) {
++        val t0 = SystemClock.elapsedRealtime()
++        Log.w(TAG, "registerCoreCallback: NO ENGINE PRESENT, firing callback synthetically")
++        // Real engine fires this asynchronously once its supervisor binder is up.
++        Handler(Looper.getMainLooper()).post {
++            serviceCallback()
++            Log.i(TAG, "core callback ran after ${SystemClock.elapsedRealtime() - t0}ms (stub)")
++        }
++    }
++}
++
++object MetaPackageManager {
++    @JvmStatic
++    fun getLaunchIntentForPackage(baseIntent: Intent): Intent? {
++        Log.w(TAG, "getLaunchIntentForPackage(${baseIntent.`package`}) -> null (stub)")
++        return null
++    }
++
++    @JvmStatic
++    fun acquireObtainAppSplash() {
++        Log.d(TAG, "acquireObtainAppSplash() no-op (stub)")
++    }
++
++    @JvmStatic
++    fun isInnerAppInstalled(packageName: String): Boolean {
++        Log.d(TAG, "isInnerAppInstalled($packageName) -> false (stub)")
++        return false
++    }
++
++    @JvmStatic
++    fun uninstallAppFully(packageName: String) {
++        Log.w(TAG, "uninstallAppFully($packageName) no-op (stub)")
++    }
++}
++
++object MetaActivityManager {
++    @JvmStatic
++    fun obtainSplashLaunchIntent(partition: Int, packageName: String, context: Context): Intent? {
++        Log.w(TAG, "obtainSplashLaunchIntent(partition=$partition, $packageName) -> null (stub)")
++        return null
++    }
++}
+diff --git a/build.gradle b/build.gradle
+index 03e32f6..2654966 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -2,25 +2,26 @@
+ 
+ buildscript {
+     repositories {
++        google()
++        mavenCentral()
+         maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
+         maven { url 'https://jitpack.io' }
+-        google()
+     }
+     dependencies {
+         classpath 'com.android.tools.build:gradle:9.3.2'
+-        // NOTE: Do not place your application dependencies here; they belong
+-        // in the individual module build.gradle files
+     }
+ }
+ 
+ allprojects {
+     repositories {
++        google()
++        mavenCentral()
+         maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
+         maven { url "https://jitpack.io" }
+-        google()
+     }
+ }
+ 
+-task clean(type: Delete) {
+-    delete rootProject.buildDir
++// FORK: Project.buildDir was removed in Gradle 9; vendor's clean task cannot configure.
++tasks.register('clean', Delete) {
++    delete rootProject.layout.buildDirectory
+ }
+diff --git a/build.gradle.orig b/build.gradle.orig
+new file mode 100644
+index 0000000..03e32f6
+--- /dev/null
++++ b/build.gradle.orig
+@@ -0,0 +1,26 @@
++// Top-level build file where you can add configuration options common to all sub-projects/modules.
++
++buildscript {
++    repositories {
++        maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
++        maven { url 'https://jitpack.io' }
++        google()
++    }
++    dependencies {
++        classpath 'com.android.tools.build:gradle:9.3.2'
++        // NOTE: Do not place your application dependencies here; they belong
++        // in the individual module build.gradle files
++    }
++}
++
++allprojects {
++    repositories {
++        maven { url 'https://mirrors.huaweicloud.com/repository/maven/' }
++        maven { url "https://jitpack.io" }
++        google()
++    }
++}
++
++task clean(type: Delete) {
++    delete rootProject.buildDir
++}
