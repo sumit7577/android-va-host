@@ -1,5 +1,9 @@
 buildscript {
     repositories { google(); mavenCentral() }
-    dependencies { classpath 'com.android.tools.build:gradle:9.3.2' }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.3.2'
+        // AGP 9 bundles Kotlin 2.2.10; the Compose compiler plugin must match it.
+        classpath 'org.jetbrains.kotlin:compose-compiler-gradle-plugin:2.2.10'
+    }
 }
 allprojects { repositories { google(); mavenCentral() } }

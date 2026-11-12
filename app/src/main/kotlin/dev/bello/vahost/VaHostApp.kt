@@ -33,8 +33,29 @@ class VaHostApp : Application() {
         report = File(base.filesDir, "va-report-${proc.substringAfterLast(':', "main")}.txt")
         try { report!!.writeText("== VA boot ${Build.VERSION.SDK_INT} / ${Build.SUPPORTED_ABIS.toList()} ==\n") } catch (_: Throwable) {}
         note("process=${android.os.Process.myPid()} 64bit=${android.os.Process.is64Bit()}")
+
+        // Lift hidden-API restrictions in EVERY process (main, :x and each :pN)
+        // BEFORE VirtualCore.startup() resolves its mirrors. This previously ran
+        // only in the main process, so the virtual processes -- the ones that
+        // actually need framework internals -- resolved against the restricted
+        // view. android.app.LoadedApk.makeApplicationInner is the case in point:
+        // it exists at runtime (the framework's own stack traces show it) but
+        // getDeclaredMethods() hides it, so the mirror came back null and
+        // makeApplication() fell through to the deprecated wrapper returning NULL.
         try {
-            VASettings.ENABLE_IO_REDIRECT = true
+            if (Build.VERSION.SDK_INT >= 28) {
+                org.lsposed.hiddenapibypass.HiddenApiBypass.addHiddenApiExemptions("")
+                note("hidden-api exemptions applied")
+            }
+        } catch (t: Throwable) {
+            note("hidden-api exemption FAILED: $t")
+        }
+        try {
+            // Mundo ships arm64 and its libmundo.so hooks NO path syscalls at
+            // all (no openat/unlinkat/fchmodat anywhere in the binary), so a
+            // working container evidently does not need IOUniformer. Testing
+            // whether we can run without it too.
+            VASettings.ENABLE_IO_REDIRECT = false
             VASettings.ENABLE_INNER_SHORTCUT = false
             VirtualCore.get().startup(base)
             note("startup() OK")

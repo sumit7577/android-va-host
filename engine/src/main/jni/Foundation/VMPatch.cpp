@@ -89,6 +89,20 @@ jint getCallingUid(alias_ref<jclass> clazz) {
 }
 
 
+/*
+ * API 28+ variant of the above. Binder.getCallingUid is a *native* method, so
+ * the only thing the patch has to change is its JNI entry pointer -- which is
+ * what RegisterNatives writes, through public API, without guessing where that
+ * pointer sits inside ArtMethod. Nothing delegates to the original: every
+ * return path in onGetCallingUid() derives the uid from the calling pid and
+ * ignores the value handed in, so there is no original worth recovering.
+ */
+jint getCallingUidDirect(alias_ref<jclass>) {
+    return Environment::ensureCurrentThreadIsAttached()->CallStaticIntMethod(
+            nativeEngineClass.get(), patchEnv.method_onGetCallingUid, 0);
+}
+
+
 static jobject new_native_openDexNativeFunc(JNIEnv *env, jclass jclazz, jstring javaSourceName,
                                             jstring javaOutputName, jint options) {
     jclass stringClass = env->FindClass("java/lang/String");
@@ -424,15 +438,66 @@ void hookAndroidVM(JArrayClass<jobject> javaMethods,
                                                                          "dvmCreateStringFromCstr");
         }
     }
-    measureNativeOffset(isArt);
-    replaceGetCallingUid(isArt);
-    replaceOpenDexFileMethod(javaMethods.getElement(OPEN_DEX).get(), isArt,
-                             apiLevel);
-    replaceCameraNativeSetupMethod(javaMethods.getElement(CAMERA_SETUP).get(),
-                                   isArt, apiLevel);
-    replaceAudioRecordNativeCheckPermission(javaMethods.getElement(
-            AUDIO_NATIVE_CHECK_PERMISSION).get(),
-                                            isArt, apiLevel);
+    /*
+     * PORT FIX (Android 9+ / API 28+).
+     *
+     * measureNativeOffset() discovers ArtMethod's layout by taking a known
+     * jmethodID and scanning forward 4 bytes at a time for the JNI function
+     * pointer; the four replace*() calls below then overwrite that pointer in
+     * place. On Android 15 the scan walks off a base that is no longer a valid
+     * ArtMethod and the process dies:
+     *
+     *   signal 11 (SIGSEGV), fault addr 0x9
+     *     #00 measureNativeOffset(bool)+50
+     *     #01 hookAndroidVM(...)
+     *
+     * All four targets are `native` methods, so the thing being replaced is a
+     * JNI entry pointer, not a Java method body. That rules LSPlant out -- it
+     * swaps Java method bodies for Java hookers -- and rules RegisterNatives
+     * in, since writing that pointer is exactly what RegisterNatives does.
+     * The one thing RegisterNatives will not do is hand back the original
+     * pointer, so each target divides on whether it needs to delegate:
+     *
+     *   getCallingUid   - no delegation needed (see getCallingUidDirect), so
+     *                     RegisterNatives covers the mechanism. But the Java
+     *                     side it calls, onGetCallingUid(), resolves foreign
+     *                     pids via VActivityManager.getUidByPid(), which is a
+     *                     synchronous binder IPC to the server process. The
+     *                     framework invokes getCallingUid() from inside binder
+     *                     dispatch, so that nested IPC deadlocks the guest
+     *                     during the bindApplication handshake -- the process
+     *                     then dies repeatedly and AMS blocklists it.
+     *                     DISABLED below until onGetCallingUid() can answer
+     *                     from a cached pid->uid map instead of an IPC.
+     *   openDexFile     - rewrites only params[1], the odex OUTPUT location,
+     *                     never the source. Without it ART writes the odex to
+     *                     its own default under the (VA-owned, writable) apk
+     *                     dir, so loading still works and the cost is a
+     *                     possible recompile. Performance, not correctness.
+     *                     DROPPED.
+     *   audio check     - AudioRecord permission has gone through AppOps since
+     *                     API 23; this is a pre-23 relic. DROPPED.
+     *   camera setup    - genuinely delegates (rewrites one arg, then calls the
+     *                     original), so it needs the original pointer and
+     *                     therefore an ELF symbol reader for libandroid_runtime.
+     *                     Deferred until a guest actually opens the camera.
+     */
+    if (apiLevel >= 28) {
+        /* DIAGNOSTIC 2026-11-12: registration disabled to isolate a deadlock.
+         * See the note below the table in docs/ENGINE-PLAN.md. */
+        ALOGI("VMPatch: getCallingUid hook DISABLED (deadlock bisect) on API %d.",
+              apiLevel);
+    } else {
+        measureNativeOffset(isArt);
+        replaceGetCallingUid(isArt);
+        replaceOpenDexFileMethod(javaMethods.getElement(OPEN_DEX).get(), isArt,
+                                 apiLevel);
+        replaceCameraNativeSetupMethod(javaMethods.getElement(CAMERA_SETUP).get(),
+                                       isArt, apiLevel);
+        replaceAudioRecordNativeCheckPermission(javaMethods.getElement(
+                AUDIO_NATIVE_CHECK_PERMISSION).get(),
+                                                isArt, apiLevel);
+    }
 }
 
 void *getDvmOrArtSOHandle() {

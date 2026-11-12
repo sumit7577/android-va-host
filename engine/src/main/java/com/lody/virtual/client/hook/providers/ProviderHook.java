@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.IInterface;
 import android.os.ParcelFileDescriptor;
 
+import com.lody.virtual.client.core.VirtualCore;
 import com.lody.virtual.client.hook.base.MethodBox;
 import com.lody.virtual.helper.utils.VLog;
 
@@ -137,6 +138,16 @@ public class ProviderHook implements InvocationHandler {
         return (AssetFileDescriptor) methodBox.call();
     }
 
+    private static int indexOfType(Class<?>[] types, Class<?> want) {
+        for (int i = 0; i < types.length; i++) if (types[i] == want) return i;
+        return -1;
+    }
+
+    private static int lastIndexOfType(Class<?>[] types, Class<?> want) {
+        for (int i = types.length - 1; i >= 0; i--) if (types[i] == want) return i;
+        return -1;
+    }
+
     @Override
     public Object invoke(Object proxy, Method method, Object... args) throws Throwable {
         try {
@@ -144,21 +155,55 @@ public class ProviderHook implements InvocationHandler {
         } catch (Throwable e) {
             e.printStackTrace();
         }
+        final Class<?>[] ptypes0 = method.getParameterTypes();
+        // PORT FIX (Android 12+): IContentProvider calls carry an
+        // AttributionSource, and the framework rejects the call when its uid
+        // does not match the real caller:
+        //   SecurityException: Calling uid: 10450 doesn't match source uid: 10001
+        // The engine's spoofed identity leaks into that object, so put the
+        // host's genuine AttributionSource back before passing the call on.
+        // TRADE-OFF: provider calls therefore attribute to the host, not the
+        // guest. Per-guest attribution needs a real solution later.
+        try {
+            if (Build.VERSION.SDK_INT >= 31 && ptypes0.length > 0
+                    && "android.content.AttributionSource".equals(ptypes0[0].getName())) {
+                Object real = VirtualCore.get().getContext().getAttributionSource();
+                if (real != null) args[0] = real;
+            }
+        } catch (Throwable ignored) {
+        }
+
         MethodBox methodBox = new MethodBox(method, mBase, args);
-        int start = Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 ? 1 : 0;
+        // PORT FIX: `start` used to be hard-coded to 1 (the old leading
+        // callingPackage String). IContentProvider's signatures have gained and
+        // lost leading parameters repeatedly -- Android 11 added featureId, and
+        // Android 12+ replaced the leading strings with an AttributionSource, so
+        // on 15 `call` is (AttributionSource, String authority, String method,
+        // String arg, Bundle extras). A fixed offset silently reads the wrong
+        // argument and blew up as "String cannot be cast to Bundle".
+        // Anchor on parameter TYPES instead, which is stable across versions.
+        final Class<?>[] ptypes = ptypes0;
+        final int uriAt = indexOfType(ptypes, Uri.class);
+        int start = uriAt >= 0 ? uriAt
+                : (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 ? 1 : 0);
         try {
             String name = method.getName();
             if ("call".equals(name)) {
-                String methodName = (String) args[start];
-                String arg = (String) args[start + 1];
-                Bundle extras = (Bundle) args[start + 2];
+                // extras is the trailing Bundle; method and arg precede it.
+                int extrasAt = lastIndexOfType(ptypes, Bundle.class);
+                if (extrasAt < 2) {
+                    return methodBox.call();   // shape we do not recognise: pass through
+                }
+                String methodName = (String) args[extrasAt - 2];
+                String arg = (String) args[extrasAt - 1];
+                Bundle extras = (Bundle) args[extrasAt];
                 return call(methodBox, methodName, arg, extras);
             } else if ("insert".equals(name)) {
                 Uri url = (Uri) args[start];
                 ContentValues initialValues = (ContentValues) args[start + 1];
                 return insert(methodBox, url, initialValues);
             } else if ("getType".equals(name)) {
-                return getType(methodBox, (Uri) args[0]);
+                return getType(methodBox, (Uri) args[uriAt >= 0 ? uriAt : 0]);
             } else if ("delete".equals(name)) {
                 Uri url = (Uri) args[start];
                 String selection = (String) args[start + 1];

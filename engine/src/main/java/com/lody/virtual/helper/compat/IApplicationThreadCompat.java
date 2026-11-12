@@ -39,7 +39,13 @@ public class IApplicationThreadCompat {
 
     public static void scheduleBindService(IInterface appThread, IBinder token, Intent intent, boolean rebind,
                                            int processState) throws RemoteException {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+        // Prefer the 14+ shape when the mirror resolved; a RefMethod is left
+        // null when its signature does not match, so this also covers vendors
+        // that kept the older one.
+        if (mirror.android.app.IApplicationThreadUDC.scheduleBindService != null) {
+            mirror.android.app.IApplicationThreadUDC.scheduleBindService
+                    .call(appThread, token, intent, rebind, processState, 0L);
+        } else if (IApplicationThreadKitkat.scheduleBindService != null) {
             IApplicationThreadKitkat.scheduleBindService.call(appThread, token, intent, rebind, processState);
         } else {
             IApplicationThread.scheduleBindService.call(appThread, token, intent, rebind);

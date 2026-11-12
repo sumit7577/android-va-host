@@ -14,6 +14,9 @@ import java.lang.reflect.Method;
 
 class MethodProxies {
 
+    /** UserHandle.PER_USER_RANGE; uid / this == the user id that owns the uid. */
+    private static final int PER_USER_RANGE = 100000;
+
     static class GetVolumeList extends MethodProxy {
 
         @Override
@@ -27,7 +30,17 @@ class MethodProxies {
                 return super.beforeCall(who, method, args);
             }
             if (args[0] instanceof Integer) {
-                args[0] = getRealUid();
+                // PORT FIX: this slot is `int uid` only up to API 25. From API 26
+                // the interface is getVolumeList(int userId, String callingPackage,
+                // int flags), so writing a uid into it makes the framework read
+                // e.g. 10458 as a *user id*, conclude we are asking about another
+                // user, and throw:
+                //   SecurityException: Need INTERACT_ACROSS_USERS to get volumes
+                //   for another user
+                // which kills any guest that touches getExternalStorageDirectory().
+                args[0] = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                        ? getRealUid() / PER_USER_RANGE
+                        : getRealUid();
             }
             MethodParameterUtils.replaceFirstAppPkg(args);
             return super.beforeCall(who, method, args);

@@ -285,14 +285,14 @@ class MethodProxies {
                                     return 0;
                                 }
                                 case "abandonSession": {
-                                    vInstaller.abandonSession((Integer) args[0]);
+                                    vInstaller.abandonSession(((Number) args[0]).intValue());
                                     return 0;
                                 }
                                 case "openSession": {
-                                    return vInstaller.openSession((Integer) args[0]);
+                                    return vInstaller.openSession(((Number) args[0]).intValue());
                                 }
                                 case "getSessionInfo": {
-                                    SessionInfo info = vInstaller.getSessionInfo((Integer) args[0]);
+                                    SessionInfo info = vInstaller.getSessionInfo(((Number) args[0]).intValue());
                                     if (info != null) {
                                         return info.alloc();
                                     }
@@ -300,7 +300,7 @@ class MethodProxies {
                                 }
                                 case "getAllSessions": {
                                     return ParceledListSliceCompat.create(
-                                            vInstaller.getAllSessions((Integer) args[0]).getList()
+                                            vInstaller.getAllSessions(((Number) args[0]).intValue()).getList()
                                     );
                                 }
                                 case "getMySessions": {
@@ -444,7 +444,7 @@ class MethodProxies {
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentServices((Intent) args[0],
-                    (String) args[1], (Integer) args[2], userId);
+                    (String) args[1], ((Number) args[2]).intValue(), userId);
             Object _hostResult = method.invoke(who, args);
             if (_hostResult != null) {
                 List<ResolveInfo> hostResult = slice ? (List) ParceledListSlice.getList.call(_hostResult)
@@ -527,7 +527,7 @@ class MethodProxies {
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentActivities((Intent) args[0],
-                    (String) args[1], (Integer) args[2], userId);
+                    (String) args[1], ((Number) args[2]).intValue(), userId);
             Object _hostResult = method.invoke(who, args);
             if (_hostResult != null) {
                 List<ResolveInfo> hostResult = slice ? (List) ParceledListSlice.getList.call(_hostResult)
@@ -1048,7 +1048,7 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
 
-            int flags = (Integer) args[0];
+            int flags = ((Number) args[0]).intValue();
             int userId = VUserHandle.myUserId();
             List<ApplicationInfo> appInfos = VPackageManager.get().getInstalledApplications(flags, userId);
             if (ParceledListSliceCompat.isReturnParceledListSlice(method)) {
@@ -1098,7 +1098,7 @@ class MethodProxies {
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentReceivers((Intent) args[0], (String) args[1],
-                    (Integer) args[2], userId);
+                    ((Number) args[2]).intValue(), userId);
             Object _hostResult = method.invoke(who, args);
             List<ResolveInfo> hostResult = slice ? (List) ParceledListSlice.getList.call(_hostResult)
                     : (List) _hostResult;
@@ -1202,7 +1202,7 @@ class MethodProxies {
             boolean slice = ParceledListSliceCompat.isReturnParceledListSlice(method);
             int userId = VUserHandle.myUserId();
             List<ResolveInfo> appResult = VPackageManager.get().queryIntentContentProviders((Intent) args[0], (String) args[1],
-                    (Integer) args[2], userId);
+                    ((Number) args[2]).intValue(), userId);
             Object _hostResult = method.invoke(who, args);
             List<ResolveInfo> hostResult = slice ? (List) ParceledListSlice.getList.call(_hostResult)
                     : (List) _hostResult;

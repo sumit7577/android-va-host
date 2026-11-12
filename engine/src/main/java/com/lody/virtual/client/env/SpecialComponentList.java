@@ -9,6 +9,7 @@ import android.os.Build;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Collection;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
@@ -111,25 +112,38 @@ public final class SpecialComponentList {
         ACTION_BLACK_LIST.add(action);
     }
 
+    /**
+     * PORT FIX: IntentFilter.mActions was an ArrayList when this was written
+     * and is an android.util.ArraySet on current Android, so the old
+     * List/ListIterator path threw ClassCastException and took installPackage
+     * down with it. Read it as a Collection, rewrite the contents, and put
+     * them back into the SAME instance so the framework keeps whatever
+     * concrete type it expects to find there.
+     */
+    @SuppressWarnings("unchecked")
     public static void protectIntentFilter(IntentFilter filter) {
-        if (filter != null) {
-            List<String> actions = mirror.android.content.IntentFilter.mActions.get(filter);
-            ListIterator<String> iterator = actions.listIterator();
-            while (iterator.hasNext()) {
-                String action = iterator.next();
-                if (SpecialComponentList.isActionInBlackList(action)) {
-                    iterator.remove();
-                    continue;
-                }
-                if (SYSTEM_BROADCAST_ACTION.contains(action)) {
-                    continue;
-                }
-                String newAction = SpecialComponentList.protectAction(action);
-                if (newAction != null) {
-                    iterator.set(newAction);
-                }
-            }
+        if (filter == null) {
+            return;
         }
+        Object raw = mirror.android.content.IntentFilter.mActions.get(filter);
+        if (!(raw instanceof Collection)) {
+            return;
+        }
+        Collection<String> actions = (Collection<String>) raw;
+        List<String> rewritten = new ArrayList<>(actions.size());
+        for (String action : actions) {
+            if (SpecialComponentList.isActionInBlackList(action)) {
+                continue;
+            }
+            if (SYSTEM_BROADCAST_ACTION.contains(action)) {
+                rewritten.add(action);
+                continue;
+            }
+            String newAction = SpecialComponentList.protectAction(action);
+            rewritten.add(newAction != null ? newAction : action);
+        }
+        actions.clear();
+        actions.addAll(rewritten);
     }
 
     public static void protectIntent(Intent intent) {

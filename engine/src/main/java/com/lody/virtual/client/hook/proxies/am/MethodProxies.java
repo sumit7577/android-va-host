@@ -285,6 +285,25 @@ class MethodProxies {
     }
 
 
+    /**
+     * PORT FIX: from API 30 PendingIntent calls getIntentSenderWithFeature()
+     * -- the variant carrying the attributionTag -- not getIntentSender().
+     * Only the old name was registered, so on current Android the call was
+     * never intercepted at all: the guest package went straight to AMS and
+     * came back as
+     *   SecurityException: getIntentSender() from uid=N is not allowed to
+     *   send as package <guest>
+     * which kills any guest that builds a PendingIntent in Application
+     * .onCreate(). Same handling, the other name.
+     */
+    static class GetIntentSenderWithFeature extends GetIntentSender {
+
+        @Override
+        public String getMethodName() {
+            return "getIntentSenderWithFeature";
+        }
+    }
+
     static class GetIntentSender extends MethodProxy {
 
         @Override
@@ -292,16 +311,35 @@ class MethodProxies {
             return "getIntentSender";
         }
 
+        /*
+         * PORT FIX: this used fixed argument offsets (args[1] package,
+         * args[5] Intent[], args[6] String[], args[7] flags). API 29 inserted
+         * featureId/attributionTag after the package and everything shifted,
+         * so `(String[]) args[6]` hit the Intent[] and threw
+         * ClassCastException before the package was ever rewritten. The
+         * original args then went through untouched and the framework saw the
+         * guest package against the host uid:
+         *   SecurityException: getIntentSender() from uid=N is not allowed to
+         *   send as package <guest>
+         * Anchor on argument TYPES instead, the same way ProviderHook does.
+         */
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            String creator = (String) args[1];
-            String[] resolvedTypes = (String[]) args[6];
+            int pkgIndex = ArrayUtils.indexOfFirst(args, String.class);
+            int intentsIndex = ArrayUtils.indexOfFirst(args, Intent[].class);
+            int typesIndex = ArrayUtils.indexOfFirst(args, String[].class);
+
+            String creator = pkgIndex != -1 ? (String) args[pkgIndex] : null;
             int type = ((Number) args[0]).intValue();
-            int flags = ((Number) args[7]).intValue();
-            if (args[5] instanceof Intent[]) {
-                Intent[] intents = (Intent[]) args[5];
+            String[] resolvedTypes = typesIndex != -1 ? (String[]) args[typesIndex] : null;
+
+            if (intentsIndex != -1) {
+                Intent[] intents = (Intent[]) args[intentsIndex];
                 for (int i = 0; i < intents.length; i++) {
                     Intent intent = intents[i];
+                    if (intent == null) {
+                        continue;
+                    }
                     if (resolvedTypes != null && i < resolvedTypes.length) {
                         intent.setDataAndType(intent.getData(), resolvedTypes[i]);
                     }
@@ -311,9 +349,11 @@ class MethodProxies {
                     }
                 }
             }
-            args[7] = flags;
-            args[1] = getHostPkg();
-            // Force userId to 0
+            // The real framework checks this package against the real calling
+            // uid, so it has to be the host's.
+            if (pkgIndex != -1) {
+                args[pkgIndex] = getHostPkg();
+            }
             if (args[args.length - 1] instanceof Integer) {
                 args[args.length - 1] = 0;
             }
@@ -427,8 +467,30 @@ class MethodProxies {
                 return method.invoke(who, args);
             }
 
+            // PORT FIX: callingPackage is not reliably the argument before the
+            // Intent. IActivityManager.startActivity has
+            // (caller, callingPackage, intent, ...) but
+            // IActivityTaskManager.startActivity -- which is what Android 10+
+            // actually calls -- inserts callingFeatureId between them, so this
+            // fixed offset overwrote the attribution tag and left the GUEST
+            // package in place:
+            //   SecurityException: Permission Denial: package=<guest> does not
+            //   belong to uid=<host uid>
+            // Match the package by value; that holds whatever gets inserted next.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-                args[intentIndex - 1] = getHostPkg();
+                String guestPkg = getAppPkg();
+                boolean replaced = false;
+                if (guestPkg != null) {
+                    for (int i = 0; i < intentIndex; i++) {
+                        if (guestPkg.equals(args[i])) {
+                            args[i] = getHostPkg();
+                            replaced = true;
+                        }
+                    }
+                }
+                if (!replaced && args[intentIndex - 1] instanceof String) {
+                    args[intentIndex - 1] = getHostPkg();
+                }
             }
             if (intent.getScheme() != null && intent.getScheme().equals(SCHEME_PACKAGE) && intent.getData() != null) {
                 if (intent.getAction() != null && intent.getAction().startsWith("android.settings.")) {
@@ -847,6 +909,34 @@ class MethodProxies {
     }
 
 
+    /**
+     * PORT FIX: IActivityManager.bindService was renamed twice -- API 29
+     * added bindIsolatedService and API 34 bindServiceInstance. Only the
+     * original name was registered, so on current Android the proxy never
+     * matched: AMS was asked to bind a component it has never heard of,
+     * returned a negative result, and ContextImpl turned that into
+     *   SecurityException: Not allowed to bind to service <guest component>
+     * Note this throw is local, but the decision was remote -- there is no
+     * Parcel.readException frame, which makes it look like an in-process
+     * check that hooking could not reach. It is not; it is just the wrong
+     * method name. Same handling, the current names.
+     */
+    static class BindIsolatedService extends BindService {
+
+        @Override
+        public String getMethodName() {
+            return "bindIsolatedService";
+        }
+    }
+
+    static class BindServiceInstance extends BindService {
+
+        @Override
+        public String getMethodName() {
+            return "bindServiceInstance";
+        }
+    }
+
     static class BindService extends MethodProxy {
 
         @Override
@@ -865,6 +955,14 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             if (isServerProcess()) {
                 userId = service.getIntExtra("_VA_|_user_id_", VUserHandle.USER_NULL);
+            }
+            // The trailing callingPackage (API 26+) is validated against the
+            // real uid, so any call that reaches the real framework has to
+            // carry the host's. It is the last String argument: resolvedType
+            // and instanceName may be null, callingPackage never is.
+            int callingPkgIdx = ArrayUtils.indexOfLast(args, String.class);
+            if (callingPkgIdx > 3) {
+                args[callingPkgIdx] = getHostPkg();
             }
             if (userId == VUserHandle.USER_NULL) {
                 return method.invoke(who, args);
@@ -1353,10 +1451,45 @@ class MethodProxies {
             return "getContentProvider";
         }
 
+        /*
+         * PORT FIX: two problems on current Android.
+         *
+         * 1. getContentProvider gained a callingPackage parameter --
+         *    (IApplicationThread, String callingPackage, String name, int
+         *    userId, boolean stable) -- so the provider name is no longer
+         *    args[1]; args[1] is the package. The old fixed index meant the
+         *    stub authority was written over the PACKAGE and the real name
+         *    was left alone.
+         * 2. The non-guest path invoked with the arguments untouched, so the
+         *    guest package reached the framework under the host uid:
+         *      SecurityException: Given calling package <guest> does not
+         *      match caller's uid N
+         *    which killed any guest touching a non-guest provider.
+         *
+         * Resolve both by position among the String arguments: two Strings
+         * means (callingPackage, name), one means (name) on the old
+         * signature. The package is always rewritten to the host's, on every
+         * path, because the real framework validates it against the real uid.
+         */
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
-            int nameIdx = getProviderNameIndex();
+            int firstStr = ArrayUtils.indexOfFirst(args, String.class);
+            int secondStr = -1;
+            for (int i = firstStr + 1; firstStr != -1 && i < args.length; i++) {
+                if (args[i] instanceof String) {
+                    secondStr = i;
+                    break;
+                }
+            }
+            int nameIdx = secondStr != -1 ? secondStr : firstStr;
+            int pkgIdx = secondStr != -1 ? firstStr : -1;
+            if (nameIdx == -1) {
+                return method.invoke(who, args);
+            }
             String name = (String) args[nameIdx];
+            if (pkgIdx != -1) {
+                args[pkgIdx] = getHostPkg();
+            }
             int userId = VUserHandle.myUserId();
             ProviderInfo info = VPackageManager.get().resolveContentProvider(name, 0, userId);
             if (info != null && info.enabled && isAppPkg(info.packageName)) {

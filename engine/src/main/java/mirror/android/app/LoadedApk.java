@@ -19,10 +19,23 @@ import mirror.RefMethod;
 import mirror.MethodParams;
 
 public class LoadedApk {
+    // NOTE: makeApplicationInnerDup maps to makeApplicationInner(boolean,Instrumentation,boolean)
     public static Class Class = RefClass.load(LoadedApk.class, "android.app.LoadedApk");
     public static RefObject<ApplicationInfo> mApplicationInfo;
+    // The constructed Application is cached here even when
+    // makeApplicationInner() returns null on this platform.
+    public static RefObject<Application> mApplication;
     @MethodParams({boolean.class, Instrumentation.class})
     public static RefMethod<Application> makeApplication;
+    // PORT FIX: Android 14 split the real work into makeApplicationInner and
+    // left makeApplication as a deprecated wrapper, which returns null here.
+    @MethodParams({boolean.class, Instrumentation.class})
+    public static RefMethod<Application> makeApplicationInner;
+    // Android 14+ private 3-arg form; the 2-arg wrapper passes
+    // allowDuplicateInstances=false, which can short-circuit to a cached
+    // (host) Application instead of building the guest's.
+    @MethodParams({boolean.class, Instrumentation.class, boolean.class})
+    public static RefMethod<Application> makeApplicationInnerDup;
     @MethodParams({ServiceConnection.class, Context.class, Handler.class, int.class})
     public static RefMethod<IServiceConnection> getServiceDispatcher;
     @MethodParams({Context.class, ServiceConnection.class})

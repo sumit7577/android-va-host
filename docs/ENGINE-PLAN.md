@@ -255,3 +255,205 @@ Guest install pipeline proper (multiple guests, manifest parse beyond the first
 activity, lib extraction), stub pool codegen, and the server-side record of
 installed guests. Then M2 swaps the ActivityInfo so theme/launchMode stop coming
 from the stub.
+
+---
+
+## Katana-Official/XYNXposed — relevant, MIT, but not the container (checked 11-Nov-2026)
+
+`https://github.com/Katana-Official/XYNXposed` — **MIT**, 188 stars, last push
+Feb-2024. Modules: `app/`, `xposedcompat/`, `hiddenapistubs/`.
+
+**It confirms our crash diagnosis, from the vendor's own mouth:**
+
+> "Since Android 15, Google stripped all symbols from libart.so and caused
+> billions of reinforced apps crash... based on the ART TI and **will not
+> resolve or hook any unexported symbol from libart.so**"
+
+That is exactly why VirtualApp's `measureNativeOffset()` / `hookAndroidVM()`
+SIGSEGVs on this device.
+
+**What it is:** a reimplementation of the Xposed API
+(`de.robv.android.xposed.XposedBridge`, `XposedHelpers`, `XC_MethodHook`,
+`XResources`, plus `DexCreator`) backed by **ART TI / JVMTI** via the `jtik`
+library. **Pure Java/Kotlin — no cpp/ or jni/ of its own.** Entry point is
+`MundoXposedBridge.init(base)` in package `top.bienvenido.xposedcompat`, the
+same `top.bienvenido` namespace as the Mundo engine: this is the Xposed layer
+built to run *inside* Mundo's sandbox.
+
+**What it does not give us:**
+- It is a *method-hooking framework*, not a container. The sandbox is still
+  VirtualApp's job.
+- **No syscall hooking.** JVMTI cannot touch libc, so `IOUniformer` and the
+  arm64 `*at` rewrite are completely unaffected.
+- JVMTI trade-offs: hooked methods are deoptimised (their README: "will only
+  make methods interpret without compiled"), and attaching an agent at runtime
+  normally requires a debuggable process — fine for a host we ship ourselves,
+  but detectable and slow.
+- `jtik` is at `0.0.1-Beta`.
+
+**Bearing on the ART-hooking replacement:**
+
+| | LSPlant | XYN / jtik |
+| --- | --- | --- |
+| Licence | LGPL-3.0 | MIT |
+| Mechanism | ArtMethod manipulation | ART TI (JVMTI) |
+| Android 15 | maintained | by design, no libart symbols |
+| Speed | compiled hooks | deoptimised/interpreted |
+| Debuggable process | not required | normally required |
+
+For the engine's *internal* hooks, LSPlant is the stronger pick. XYN is the
+right answer if the goal is **running Xposed modules inside the sandbox** —
+but it assumes Mundo underneath.
+
+Also noted: `Katana-Official/Meta` ships a prebuilt Mundo-based sandbox /
+SULoader app with releases. If the real goal is "run Xposed modules in a
+sandbox" rather than "own an engine", that is the shortcut.
+
+---
+
+## What Katana's shipping binary shows (Meta V1.0.10.1, analysed 12-Nov-2026)
+
+`Katana-Official/Meta` release `app-arm64-v8a-release.apk`, 5.3 MB. Static
+analysis only; nothing was run.
+
+### It ships arm64. That alone is the proof VirtualApp's approach is optional.
+
+```
+lib/arm64-v8a/libmundo.so      434 KB
+lib/arm64-v8a/liblsplant.so    108 KB
+```
+
+### 1. Mundo links LSPlant — at the ELF level, not just in the credits
+
+```
+libmundo.so  NEEDED: liblsplant.so, libm.so, libdl.so, libc.so
+```
+
+`liblsplant.so` exports the standard v2 API: `lsplant::v2::Init`, `UnHook`,
+`IsHooked`, `Deoptimize`, `GetNativeFunction`, `MakeClassInheritable`,
+`MakeDexFileTrusted`. So the replacement for our crashing
+`measureNativeOffset`/`hookAndroidVM` is exactly what the working engine uses.
+
+### 2. It hooks with Dobby, not ShadowHook/ByteHook
+
+`libmundo.so` strings contain `Dobby` and `libart.so`; there is no
+`libshadowhook.so` or `libbytehook.so` in the apk. Imports include
+`dlopen`/`dlsym`/`dl_iterate_phdr`/`mmap`/`mprotect`/`getauxval` — a symbol
+resolver plus an inline-hook engine, statically linked.
+
+### 3. THE BIG ONE: there is no path-syscall redirection anywhere
+
+`libmundo.so` contains **no** `openat`, `faccessat`, `unlinkat`, `renameat`,
+`fchmodat`, `mkdirat`, `readlinkat`, `statx` — in imports or in strings. The
+only `*at` symbol is `fstatat`, used normally. The dex has no `IOUniformer`,
+no `NativeEngine`, no `redirect*` classes.
+
+**A shipping container therefore does not need VirtualApp's IOUniformer.**
+Mundo does its redirection in Java (ContextImpl paths, ApplicationInfo) and
+accepts that raw native file access sees real paths.
+
+This potentially removes the 4-8 week arm64 item from the critical path: the
+`__NR_chmod`/`__NR_unlink`/... compile failures are *IOUniformer's*. Drop that
+translation unit and arm64 may simply build.
+
+### 4. Java layer
+
+```
+643  de/robv/android/xposed        <- XYNXposed's xposedcompat, bundled
+332  top/bienvenido/mundo/manifest
+156  top/bienvenido/mundo/common
+154  top/bienvenido/saas/i18n
+ 17  top/bienvenido/mundo/supervisor
+```
+
+The engine's Java side is small. `supervisor` is the bootstrap seen earlier as
+`MundoSupervisorProvider`.
+
+### Revised plan for our fork
+
+1. `VASettings.ENABLE_IO_REDIRECT = false` — no IOUniformer at runtime.
+2. Exclude `Foundation/IOUniformer.cpp` from the build and re-enable
+   `arm64-v8a`; the legacy-syscall errors should disappear with it.
+3. Replace `measureNativeOffset`/`hookAndroidVM` with LSPlant.
+
+That is a materially cheaper plan than the one in §2, and it is the
+architecture a currently-shipping engine actually uses.
+
+### Correction to step 3 — LSPlant is the wrong tool for these four
+
+Step 3 above was written from Mundo's ELF imports, before reading what the
+four patches it refers to actually do. They are not Java-method hooks:
+
+```c
+void **jniFuncPtr = (void **) (methodID + native_offset);
+orig = *jniFuncPtr;        // save
+*jniFuncPtr = new_func;    // overwrite
+```
+
+Every one of the four targets — `Binder.getCallingUid`,
+`DexFile.openDexFileNative`, `Camera.native_setup`,
+`AudioRecord.native_check_permission` — is declared `native`. What
+`measureNativeOffset` is locating is the **JNI entry pointer** inside
+ArtMethod, and what the `replace*()` functions overwrite is that pointer.
+
+LSPlant swaps a Java method's *body* for a trampoline into a Java hooker. It
+has no way to express "point this native method's JNI slot at my C function",
+so it cannot do this job no matter how well it is integrated. The API that
+*does* do exactly this write, through public and stable JNI, is
+`RegisterNatives` — and VirtualApp already used it on the Dalvik branch of
+`replaceGetCallingUid`.
+
+The one thing `RegisterNatives` will not do is hand back the original
+pointer. So the four split on whether they delegate:
+
+| patch | delegates to original? | disposition |
+|---|---|---|
+| `getCallingUid` | **no** — `onGetCallingUid(int)` ignores its argument on every return path; the uid is derived from the calling pid | **done**, via `RegisterNatives` |
+| `openDexFileNative` | yes | **dropped** — see note below |
+| `native_check_permission` | yes | **dropped** — AudioRecord permission has gone through AppOps since API 23; a pre-23 relic |
+| `Camera.native_setup` | yes — rewrites one arg, then calls through | **deferred** until a guest opens the camera. This is the only one that needs the original pointer, hence an ELF symbol reader for `libandroid_runtime.so` |
+
+On `openDexFileNative` specifically, the cost of dropping it is small but it
+is not zero, so it is worth stating exactly. `onOpenDexFileNative(String[])`
+only ever rewrites `params[1]`, the **odex output location** — never
+`params[0]`, the source — and only when the dex being opened belongs to an
+installed virtual app that does not `dependSystem`:
+
+```java
+outputPath = info.getOdexFile().getPath();
+params[1] = outputPath;
+```
+
+So it is an odex-destination hint, not source redirection. Without it ART
+writes the odex to its own default, `<apk dir>/oat/<isa>/`. VA created and
+owns that directory, so it is writable and loading still succeeds; what is
+lost is the guarantee that the odex lands in `info.getOdexFile()`, which may
+cost a recompile on first load. That is a **performance** regression, not a
+correctness one. `startDexOverride()` keeps building its map with no consumer,
+which is inert.
+
+If first-launch dex compilation ever shows up as a real cost, this is the
+patch to bring back — and it would need the original pointer, so it lands in
+the same bucket as camera below.
+
+Net effect: no LSPlant dependency, no Dobby dependency, and no LGPL-3.0
+obligation on the engine module. Camera is the only remaining case that
+would justify either, and only if a guest needs it.
+
+### Item 2 of the pending list also dissolves — Dobby is not needed
+
+`MSHookFunction` has exactly one non-Substrate caller in the tree:
+`Foundation/IOUniformer.cpp`, at three sites (lines ~106, ~676, ~682). All
+three sit in the `#else` half of this port's
+`#if defined(__aarch64__) || defined(__x86_64__)` guard, i.e. they are
+32-bit-only. On arm64 the whole file collapses to seven no-ops, so
+`MSHookFunction` has **zero callers** and Substrate's missing arm64
+implementation is unreachable rather than a gap. Stubbing `MSHookFunction` on
+`__aarch64__` is therefore complete, not a placeholder, and Dobby buys
+nothing until something other than IOUniformer wants inline hooking.
+
+Runtime behaviour is unchanged on either ABI regardless, because
+`startIOUniformer()` is reached only through
+`if (VASettings.ENABLE_IO_REDIRECT)` in `VClientImpl`, and the host sets that
+flag to `false`. IOUniformer is already inert on arm32; on arm64 it is
+additionally compiled out.

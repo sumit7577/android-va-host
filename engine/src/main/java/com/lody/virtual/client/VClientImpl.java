@@ -296,7 +296,13 @@ public final class VClientImpl extends IVClient.Stub {
         Object boundApp = fixBoundApp(mBoundApplication);
         mBoundApplication.info = ContextImpl.mPackageInfo.get(context);
         mirror.android.app.ActivityThread.AppBindData.info.set(boundApp, data.info);
-        VMRuntime.setTargetSdkVersion.call(VMRuntime.getRuntime.call(), data.appInfo.targetSdkVersion);
+        // PORT FIX: dalvik.system.VMRuntime.setTargetSdkVersion is no longer
+        // resolvable on modern Android, so the mirror is null. It only tells the
+        // runtime which compat behaviours to apply to the guest -- useful, not
+        // required to launch.
+        if (VMRuntime.setTargetSdkVersion != null && VMRuntime.getRuntime != null) {
+            VMRuntime.setTargetSdkVersion.call(VMRuntime.getRuntime.call(), data.appInfo.targetSdkVersion);
+        }
 
         Configuration configuration = context.getResources().getConfiguration();
         Object compatInfo = CompatibilityInfo.ctor.newInstance(data.appInfo, configuration.screenLayout, configuration.smallestScreenWidthDp, false);
@@ -313,7 +319,59 @@ public final class VClientImpl extends IVClient.Stub {
         if (!conflict) {
             InvocationStubManager.getInstance().checkEnv(AppInstrumentation.class);
         }
-        mInitialApplication = LoadedApk.makeApplication.call(data.info, false, null);
+        // Diagnose why the guest LoadedApk refuses to make an Application.
+        try {
+            StringBuilder d = new StringBuilder("guest LoadedApk: ");
+            for (String f : new String[]{"mPackageName", "mAppDir", "mApplication", "mActivityThread", "mClassLoader"}) {
+                Object v = null;
+                try {
+                    java.lang.reflect.Field fd = data.info.getClass().getDeclaredField(f);
+                    fd.setAccessible(true);
+                    v = fd.get(data.info);
+                } catch (Throwable t) { v = "<" + t.getClass().getSimpleName() + ">"; }
+                d.append(f).append('=').append(v == null ? "null" : String.valueOf(v)).append("  ");
+            }
+            d.append(" appInfo.className=").append(data.appInfo == null ? "?" : data.appInfo.className);
+            d.append(" processName=").append(processName);
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", d.toString());
+        } catch (Throwable ignored) {
+        }
+        /*
+         * PORT NOTE. Upstream's call -- LoadedApk.makeApplication(false, null) --
+         * is correct and works, but ONLY once hidden-API exemptions have been
+         * applied in this process (see VaHostApp.attachBaseContext). Without
+         * them it silently returned null, which then surfaced three frames
+         * later as "Application.onCreate() on a null object reference".
+         *
+         * SECOND-CALL BEHAVIOUR (measured, not theorised): whichever of
+         * makeApplication / makeApplicationInner is invoked FIRST returns null,
+         * and the one invoked SECOND returns a valid Application. Tested in
+         * three orderings (Inner3->Inner2, Inner2->legacy, legacy->Inner2) --
+         * the result tracks call ORDER, not the method. So the first call is
+         * doing the construction and failing to return it.
+         *
+         * Reading LoadedApk.mApplication back after the first call did NOT
+         * recover it, so the instance is cached somewhere else (or that mirror
+         * field does not resolve). Unresolved. The retry below is therefore
+         * load-bearing, not defensive -- do not "simplify" it away.
+         */
+        String madeVia = "none";
+        try {
+            mInitialApplication = LoadedApk.makeApplication.call(data.info, false, null);
+            madeVia = "makeApplication";
+        } catch (Throwable t) {
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplication threw: " + t);
+        }
+        if (mInitialApplication == null && LoadedApk.makeApplicationInner != null) {
+            try {
+                mInitialApplication = LoadedApk.makeApplicationInner.call(data.info, false, null);
+                madeVia = "makeApplicationInner";
+            } catch (Throwable t) {
+                com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplicationInner threw: " + t);
+            }
+        }
+        com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplication via " + madeVia
+                + " -> " + (mInitialApplication == null ? "NULL" : mInitialApplication.getClass().getName()));
         mirror.android.app.ActivityThread.mInitialApplication.set(mainThread, mInitialApplication);
         ContextFixer.fixContext(mInitialApplication);
         if (Build.VERSION.SDK_INT >= 24 && "com.tencent.mm:recovery".equals(processName)) {
@@ -338,10 +396,25 @@ public final class VClientImpl extends IVClient.Stub {
                 mInitialApplication = createdApp;
             }
         } catch (Exception e) {
-            if (!mInstrumentation.onException(mInitialApplication, e)) {
-                throw new RuntimeException(
-                        "Unable to create application " + mInitialApplication.getClass().getName()
-                                + ": " + e.toString(), e);
+            // PORT FIX: this handler dereferenced mInitialApplication, which is
+            // null precisely when makeApplication() failed -- so the real
+            // exception was masked by an NPE thrown from the error path itself.
+            StringBuilder sb = new StringBuilder("makeApplication FAILED: ");
+            Throwable t = e;
+            int depth = 0;
+            while (t != null && depth < 4) {
+                sb.append(depth == 0 ? "" : " <- caused by ")
+                  .append(t.getClass().getName()).append(": ").append(t.getMessage());
+                StackTraceElement[] st = t.getStackTrace();
+                for (int i = 0; i < Math.min(24, st.length); i++) sb.append("\n    at ").append(st[i]);
+                t = t.getCause();
+                depth++;
+            }
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", sb.toString());
+            if (mInitialApplication == null || !mInstrumentation.onException(mInitialApplication, e)) {
+                throw new RuntimeException("Unable to create application "
+                        + (mInitialApplication == null ? "<null>" : mInitialApplication.getClass().getName())
+                        + ": " + e, e);
             }
         }
         VActivityManager.get().appDoneExecuting();

@@ -8,6 +8,7 @@ import com.lody.virtual.client.hook.delegate.AppInstrumentation;
 import com.lody.virtual.client.hook.proxies.account.AccountManagerStub;
 import com.lody.virtual.client.hook.proxies.alarm.AlarmManagerStub;
 import com.lody.virtual.client.hook.proxies.am.ActivityManagerStub;
+import com.lody.virtual.client.hook.proxies.am.ActivityTaskManagerStub;
 import com.lody.virtual.client.hook.proxies.am.HCallbackStub;
 import com.lody.virtual.client.hook.proxies.appops.AppOpsManagerStub;
 import com.lody.virtual.client.hook.proxies.appwidget.AppWidgetManagerStub;
@@ -147,12 +148,19 @@ public final class InvocationStubManager {
 		}
 		if (VirtualCore.get().isServerProcess()) {
 			safeAdd(() -> new ActivityManagerStub());
+			if (ActivityTaskManagerStub.isSupported()) {
+				safeAdd(() -> new ActivityTaskManagerStub());
+			}
 			safeAdd(() -> new PackageManagerStub());
 			return;
 		}
 		if (VirtualCore.get().isVAppProcess()) {
 			safeAdd(() -> new LibCoreStub());
 			safeAdd(() -> new ActivityManagerStub());
+			// Android 10+ moved startActivity and friends off IActivityManager.
+			if (ActivityTaskManagerStub.isSupported()) {
+				safeAdd(() -> new ActivityTaskManagerStub());
+			}
 			safeAdd(() -> new PackageManagerStub());
 			safeAdd(() -> HCallbackStub.getDefault());
 			safeAdd(() -> new ISmsStub());

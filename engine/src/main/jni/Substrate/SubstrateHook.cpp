@@ -923,9 +923,25 @@ static void SubstrateHookFunction(SubstrateProcessRef process, void *symbol, voi
 }
 #endif
 
+#if defined(__aarch64__)
+/*
+ * PORT FIX (arm64). Substrate implements SubstrateHookFunction only for
+ * __arm__ and __i386__/__x86_64__ -- this 2012 CydiaSubstrate derivative was
+ * written before arm64 existed, so there is no 64-bit inline hooker here.
+ *
+ * Katana's Mundo replaces this entire layer with Dobby (its libmundo.so links
+ * Dobby plus liblsplant.so and ships arm64). Until we do the same, native
+ * inline hooking is simply unavailable on 64-bit: no-op so everything else
+ * builds and runs. Java-level hooking is unaffected.
+ */
+_extern void MSHookFunction(void *symbol, void *replace, void **result) {
+    if (result != NULL) *result = NULL;
+}
+#else
 _extern void MSHookFunction(void *symbol, void *replace, void **result) {
      SubstrateHookFunction(NULL, symbol, replace, result);
 }
+#endif
 
 #if defined(__APPLE__) && defined(__arm__)
 _extern void _Z14MSHookFunctionPvS_PS_(void *symbol, void *replace, void **result) {

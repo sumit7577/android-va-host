@@ -98,5 +98,7 @@ public class ActivityThread {
         public static RefStaticInt LAUNCH_ACTIVITY;
         public static RefStaticInt CREATE_SERVICE;
         public static RefStaticInt SCHEDULE_CRASH;
+        // Android 9+: activity lifecycle arrives as a ClientTransaction.
+        public static RefStaticInt EXECUTE_TRANSACTION;
     }
 }

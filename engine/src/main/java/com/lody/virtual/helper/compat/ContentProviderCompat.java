@@ -19,6 +19,14 @@ public class ContentProviderCompat {
             return context.getContentResolver().call(uri, method, arg, extras);
         }
         ContentProviderClient client = crazyAcquireContentProvider(context, uri);
+        if (client == null) {
+            // Previously this fell straight into client.call() and surfaced as
+            // a bare NPE from whichever caller happened to be running -- the
+            // host installing an app, or the server forking a guest process.
+            throw new IllegalStateException(
+                    "Could not acquire ContentProvider " + uri
+                            + " after " + ACQUIRE_TIMEOUT_MS + "ms; its process did not publish it");
+        }
         Bundle res = null;
         try {
             res = client.call(method, arg, extras);
@@ -38,15 +46,27 @@ public class ContentProviderCompat {
         return context.getContentResolver().acquireContentProviderClient(uri);
     }
 
+    /**
+     * Acquiring a provider whose process is not running makes the framework
+     * fork that process, and it only publishes once its Application has run --
+     * for this engine that means the full stub injection first. The original
+     * 5x100ms budget regularly expired before that finished, which is how a
+     * cold start surfaced as an NPE in whichever caller lost the race. Wait
+     * long enough for a process start, backing off so a warm provider is still
+     * returned immediately.
+     */
+    private static final int ACQUIRE_TIMEOUT_MS = 10000;
+
     public static ContentProviderClient crazyAcquireContentProvider(Context context, Uri uri) {
         ContentProviderClient client = acquireContentProviderClient(context, uri);
-        if (client == null) {
-            int retry = 0;
-            while (retry < 5 && client == null) {
-                SystemClock.sleep(100);
-                retry++;
-                client = acquireContentProviderClient(context, uri);
+        long deadline = SystemClock.uptimeMillis() + ACQUIRE_TIMEOUT_MS;
+        long backoff = 20;
+        while (client == null && SystemClock.uptimeMillis() < deadline) {
+            SystemClock.sleep(backoff);
+            if (backoff < 200) {
+                backoff *= 2;
             }
+            client = acquireContentProviderClient(context, uri);
         }
         return client;
     }

@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The loader window floats over the guest, so it has to be an overlay. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- A guest's OBB lives at /sdcard/Android/obb/<guest pkg>/, owned by the
+         REAL app's uid (u0_aNNN, group ext_obb_rw). The container runs as the
+         HOST uid, so without all-files access it cannot read the expansion
+         file and UE4 titles fall through to their "No OBB found" downloader.
+         This is a user-granted toggle, not an install-time grant. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
     <application
         android:name=".VaHostApp"
         android:label="VA Host"
@@ -10,5 +22,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".overlay.LoaderOverlayService"
+            android:exported="false" />
     </application>
 </manifest>

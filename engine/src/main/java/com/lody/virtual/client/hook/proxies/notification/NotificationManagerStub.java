@@ -36,6 +36,22 @@ public class NotificationManagerStub extends MethodInvocationProxy<MethodInvocat
             addMethodProxy(new ReplaceCallingPkgMethodProxy("getNotificationPolicy"));
             addMethodProxy(new ReplaceCallingPkgMethodProxy("isNotificationPolicyAccessGrantedForPackage"));
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // PORT FIX: notification channels arrived in API 26 and this list
+            // was never updated, so every channel call went out unproxied
+            // carrying the guest package under the host uid:
+            //   SecurityException: Package <guest> is not owned by uid N
+            // An app that creates its channels in Application.onCreate (most
+            // of them) therefore died before its first activity.
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("createNotificationChannels"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("createNotificationChannelGroups"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("deleteNotificationChannel"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("deleteNotificationChannelGroup"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("getNotificationChannel"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("getNotificationChannels"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("getNotificationChannelGroup"));
+            addMethodProxy(new ReplaceCallingPkgMethodProxy("getNotificationChannelGroups"));
+        }
         if ("samsung".equalsIgnoreCase(Build.BRAND) || "samsung".equalsIgnoreCase(Build.MANUFACTURER)) {
             addMethodProxy(new ReplaceCallingPkgMethodProxy("removeEdgeNotification"));
         }

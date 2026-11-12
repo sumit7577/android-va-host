@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 android {
     namespace 'dev.bello.vahost'
@@ -13,9 +14,12 @@ android {
         targetSdk 24
         versionCode 1
         versionName "1.0"
-        // The engine .so is 32-bit only (arm64 blocked by the __NR_* syscalls),
-        // so the whole app must run 32-bit.
-        ndk { abiFilters "armeabi-v7a" }
+        // Both ABIs ship now: the __NR_* syscall wall that blocked arm64 was in
+        // IOUniformer, which this port compiles out on 64-bit. A 64-bit device
+        // will pick arm64-v8a, so that is the path under test. Note the host
+        // process ABI is fixed at install time, and a guest's native libs have
+        // to match it -- a 32-bit-only guest needs a 32-bit host.
+        ndk { abiFilters "armeabi-v7a", "arm64-v8a" }
     }
 
     buildTypes { debug { debuggable true; minifyEnabled false } }
@@ -24,6 +28,7 @@ android {
         targetCompatibility JavaVersion.VERSION_21
     }
     lint { abortOnError false }
+    buildFeatures { compose true }
     packaging { jniLibs { useLegacyPackaging = true } }
 }
 
@@ -31,6 +36,19 @@ dependencies {
     // Direct module dependency: no more copying an aar between projects,
     // so the engine can never be stale relative to the shell.
     implementation project(':engine')
+    // Lifts hidden-API restrictions in every process before the engine resolves
+    // its mirrors (needs compileSdk 37).
+    implementation 'org.lsposed.hiddenapibypass:hiddenapibypass:6.2'
+
+    implementation platform('androidx.compose:compose-bom:2025.08.00')
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.activity:activity-compose:1.9.3'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'androidx.core:core-ktx:1.13.1'
 }
 
 // The test guest ships inside the shell as an asset, ready for installPackage.

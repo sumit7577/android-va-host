@@ -195,6 +195,17 @@ public class MethodInvocationStub<T> {
                 if (exception instanceof InvocationTargetException && ((InvocationTargetException) exception).getTargetException() != null) {
                     exception = ((InvocationTargetException) exception).getTargetException();
                 }
+                // PORT DIAGNOSTIC: a SecurityException here almost always means
+                // this call carried the GUEST package out to the real framework
+                // while running under the HOST uid. The stack only shows the
+                // dynamic proxy, so name the method and say whether a proxy
+                // was even matched -- that is the difference between "our
+                // proxy is wrong" and "there is no proxy for this method".
+                if (exception instanceof SecurityException) {
+                    com.lody.virtual.helper.utils.PortLog.w("MethodInvocationStub",
+                            "SecurityException from " + method.getName()
+                                    + " (proxied=" + useProxy + "): " + exception.getMessage());
+                }
                 throw exception;
 
             } finally {

@@ -11,6 +11,38 @@
 #include "Path.h"
 #include "SymbolFinder.h"
 
+/*
+ * PORT FIX (arm64).
+ *
+ * This file hooks the legacy path syscalls -- __NR_chmod, __NR_unlink,
+ * __NR_rename, __NR_stat64, __NR_access, __NR_link, __NR_symlink, __NR_mknod,
+ * __NR_utimes and friends. None of those exist on AArch64: the arm64 kernel ABI
+ * keeps only the *at family (fchmodat, unlinkat, renameat, newfstatat,
+ * faccessat, openat). 43 call sites fail to compile for arm64-v8a.
+ *
+ * Katana's shipping Mundo engine resolves this by not doing syscall-level
+ * redirection at all -- its arm64 libmundo.so contains no path-syscall hooks
+ * whatsoever, and redirects in Java instead. So rather than port 43 syscalls to
+ * the *at family, this layer is compiled out on 64-bit and the seven public
+ * entry points become identity/no-ops.
+ *
+ * Consequence: on arm64 a guest's RAW NATIVE file access sees real paths.
+ * Java-level redirection still applies. That is the same trade-off Mundo makes.
+ */
+#if defined(__aarch64__) || defined(__x86_64__)
+
+namespace IOUniformer {
+    void init_env_before_all() {}
+    void startUniformer(const char *, int, int) {}
+    void redirect(const char *, const char *) {}
+    void whitelist(const char *) {}
+    void forbid(const char *) {}
+    const char *query(const char *orig_path) { return orig_path; }
+    const char *reverse(const char *redirected_path) { return redirected_path; }
+}
+
+#else
+
 bool iu_loaded = false;
 
 void IOUniformer::init_env_before_all() {
@@ -712,3 +744,5 @@ void IOUniformer::startUniformer(const char *so_path, int api_level, int preview
     }
     hook_dlopen(api_level);
 }
+
+#endif  // 64-bit: syscall redirection compiled out

@@ -27,7 +27,7 @@ public class TelephonyRegistryStub extends BinderInvocationProxy {
 					if (isFakeLocationEnable()) {
 						for (int i = args.length - 1; i > 0; i--) {
 							if (args[i] instanceof Integer) {
-								int events = (Integer) args[i];
+								int events = ((Number) args[i]).intValue();
 								events ^= PhoneStateListener.LISTEN_CELL_INFO;
 								events ^= PhoneStateListener.LISTEN_CELL_LOCATION;
 								args[i] = events;

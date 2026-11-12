@@ -33,7 +33,7 @@ public class Constants {
 	/**
 	 * Server process name of VA
 	 */
-	public static String SERVER_PROCESS_NAME = ":x";
+	public static String SERVER_PROCESS_NAME = ":x2";
 	/**
 	 * The activity who handle the shortcut.
 	 */
