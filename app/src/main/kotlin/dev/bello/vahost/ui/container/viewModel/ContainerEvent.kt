@@ -20,4 +20,12 @@ sealed class ContainerEvent : ViewEvent {
 
     /** Show/hide the floating window listing what the guest has loaded. */
     data object ToggleLoaderWindow : ContainerEvent()
+
+    data class SelectTab(val tab: ContainerTab) : ContainerEvent()
+
+    /** One-shot refresh of the process list; the Process tab also polls. */
+    data object RefreshProcesses : ContainerEvent()
+
+    /** System libraries swamp the guest's own files, so they are off by default. */
+    data object ToggleSystemLibs : ContainerEvent()
 }

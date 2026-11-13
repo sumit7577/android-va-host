@@ -264,6 +264,12 @@ public final class VClientImpl extends IVClient.Stub {
             startIOUniformer();
         }
         NativeEngine.launchEngine();
+        // ART hooking is NOT started here. bindApplication runs on the main
+        // thread inside a binder-dispatched EXECUTE_TRANSACTION, and LSPlant's
+        // Init suspends threads and takes ART locks to install its inline
+        // hooks -- doing that from inside that dispatch hangs the process
+        // (APP_SCOUT_HANG, main blocked in nativeInitArtHooker). It is started
+        // at process start instead; see VaHostApp.
         Object mainThread = VirtualCore.mainThread();
         NativeEngine.startDexOverride();
         Context context = createPackageContext(data.appInfo.packageName);

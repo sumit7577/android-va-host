@@ -9,6 +9,7 @@ import com.lody.virtual.client.env.VirtualRuntime;
 import com.lody.virtual.client.ipc.VActivityManager;
 import com.lody.virtual.client.natives.NativeMethods;
 import com.lody.virtual.helper.compat.BuildCompat;
+import com.lody.virtual.helper.utils.PortLog;
 import com.lody.virtual.helper.utils.VLog;
 import com.lody.virtual.os.VUserHandle;
 import com.lody.virtual.remote.InstalledAppInfo;
@@ -132,6 +133,30 @@ public class NativeEngine {
         } catch (Throwable e) {
             VLog.e(TAG, VLog.getStackTraceString(e));
         }
+    }
+
+    /**
+     * ART hooking, for framework methods the Binder-proxy hooks cannot reach
+     * because they decide in-process. Returns false when unavailable, and the
+     * engine carries on without it.
+     */
+    private static native boolean nativeInitArtHooker();
+
+    private static boolean sArtHookerReady;
+
+    public static boolean initArtHooker() {
+        try {
+            sArtHookerReady = nativeInitArtHooker();
+        } catch (Throwable e) {
+            sArtHookerReady = false;
+            VLog.w(TAG, "ART hooker unavailable: " + e.getMessage());
+        }
+        PortLog.w(TAG, "ART hooker ready=" + sArtHookerReady);
+        return sArtHookerReady;
+    }
+
+    public static boolean isArtHookerReady() {
+        return sArtHookerReady;
     }
 
     static void launchEngine() {

@@ -32,10 +32,20 @@ android {
 
     // AGP 8+ turns AIDL off by default; this tree has 47 .aidl files,
     // including the framework interfaces it reimplements.
-    buildFeatures { aidl true }
+    buildFeatures { aidl true; prefab true }
 }
 
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
+    // Built from LSPlant master (see libs/lsplant-commit.txt), not the 6.4
+    // release: 6.4 treats an inlined ClassLinker::FixupStaticTrampolines as a
+    // fatal init error, and Android 15 inlines it -- no such symbol exists in
+    // libart.so under any name. Master explicitly tolerates its absence.
+    // The standalone variant is the one to use: "stl": "none", so it coexists
+    // with this tree's c++_static, and building it ourselves gets 16 KB page
+    // alignment that the Maven prebuilt lacks.
+    implementation files('libs/lsplant-standalone.aar')
+    // PROBE: inline hooker for LSPlant's InitInfo.inline_hooker.
+    implementation 'com.bytedance.android:shadowhook:1.0.10'
 }

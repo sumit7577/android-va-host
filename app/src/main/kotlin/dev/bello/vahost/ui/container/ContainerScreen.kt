@@ -12,6 +12,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Card
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -38,7 +42,16 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.bello.vahost.ui.container.viewModel.ContainerEvent
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import dev.bello.vahost.probe.GuestProcess
+import dev.bello.vahost.probe.LoadedArtifact
 import dev.bello.vahost.ui.container.viewModel.ContainerState
+import dev.bello.vahost.ui.container.viewModel.ContainerTab
 import dev.bello.vahost.ui.container.viewModel.ContainerViewModel
 import dev.bello.vahost.ui.container.viewModel.GuestApp
 import dev.bello.vahost.ui.container.viewModel.ProgressBarState
@@ -55,67 +68,82 @@ private fun ContainerScreen(
     onEvent: (ContainerEvent) -> Unit,
 ) {
     MaterialTheme {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item { EngineStatus(state) }
-
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = { onEvent(ContainerEvent.RunEmbeddedGuest) },
-                            modifier = Modifier.weight(1f),
-                        ) { Text("Run test guest") }
-                        OutlinedButton(
-                            onClick = { onEvent(ContainerEvent.ToggleLoaderWindow) },
-                        ) {
-                            Text(
-                                if (state.loaderWindowShown) "Hide loader"
-                                else if (state.canDrawOverlay) "Loader window"
-                                else "Allow overlay"
-                            )
-                        }
-                    }
-                }
-
-                item {
-                    Text(
-                        text = "Installed apps — tap to run inside the container",
-                        style = MaterialTheme.typography.titleSmall,
-                        modifier = Modifier.padding(top = 8.dp),
-                    )
-                }
-
-                if (state.progressBarState == ProgressBarState.Loading) {
-                    item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
-                }
-
-                items(state.apps, key = { it.packageName }) { app ->
-                    AppRow(
-                        app = app,
-                        isRunning = state.runningPackage == app.packageName,
-                        isInstalled = app.packageName in state.installedInEngine,
-                        onClick = { onEvent(ContainerEvent.RunApp(app.packageName)) },
-                    )
-                }
-
-                if (state.log.isNotEmpty()) {
-                    item { LogHeader(onClear = { onEvent(ContainerEvent.ClearLog) }) }
-                    items(state.log) { line ->
-                        Text(
-                            text = line,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
+        Scaffold(
+            bottomBar = {
+                NavigationBar {
+                    ContainerTab.entries.forEach { tab ->
+                        NavigationBarItem(
+                            selected = state.selectedTab == tab,
+                            onClick = { onEvent(ContainerEvent.SelectTab(tab)) },
+                            icon = {
+                                Icon(
+                                    imageVector = when (tab) {
+                                        ContainerTab.Home -> Icons.Filled.Home
+                                        ContainerTab.Process -> Icons.Filled.List
+                                        ContainerTab.Settings -> Icons.Filled.Settings
+                                    },
+                                    contentDescription = tab.name,
+                                )
+                            },
+                            label = { Text(tab.name) },
                         )
                     }
                 }
+            },
+        ) { padding ->
+            Surface(modifier = Modifier.fillMaxSize().padding(padding)) {
+                when (state.selectedTab) {
+                    ContainerTab.Home -> HomeTab(state, onEvent)
+                    ContainerTab.Process -> ProcessTab(state, onEvent)
+                    ContainerTab.Settings -> SettingsTab(state, onEvent)
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun HomeTab(state: ContainerState, onEvent: (ContainerEvent) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item { EngineStatus(state) }
+        item {
+            OutlinedButton(
+                onClick = { onEvent(ContainerEvent.RunEmbeddedGuest) },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Run embedded test guest") }
+        }
+        item {
+            Text(
+                text = "Installed apps \u2014 tap to run inside the container",
+                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+        if (state.progressBarState == ProgressBarState.Loading) {
+            item { LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) }
+        }
+        items(state.apps, key = { it.packageName }) { app ->
+            AppRow(
+                app = app,
+                isRunning = state.runningPackage == app.packageName,
+                isInstalled = app.packageName in state.installedInEngine,
+                onClick = { onEvent(ContainerEvent.RunApp(app.packageName)) },
+            )
+        }
+        if (state.log.isNotEmpty()) {
+            item { LogHeader(onClear = { onEvent(ContainerEvent.ClearLog) }) }
+            items(state.log) { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                )
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
@@ -221,5 +249,210 @@ private fun LogHeader(onClear: () -> Unit) {
     ) {
         Text("Log", style = MaterialTheme.typography.titleSmall)
         OutlinedButton(onClick = onClear) { Text("Clear") }
+    }
+}
+
+@Composable
+private fun ProcessTab(state: ContainerState, onEvent: (ContainerEvent) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        item {
+            Column(modifier = Modifier.padding(vertical = 16.dp)) {
+                Text("Guest processes", style = MaterialTheme.typography.headlineSmall)
+                Text(
+                    // Read from /proc/<pid>/maps rather than hooking the loader,
+                    // so dlopen() from native code shows up too.
+                    text = "what each guest process has mapped, live from /proc",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+
+        if (state.processes.isEmpty()) {
+            item {
+                Text(
+                    text = "No guest process running. Launch an app from Home.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = if (state.showSystemLibs) "all mapped files" else "guest files only",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                OutlinedButton(onClick = { onEvent(ContainerEvent.ToggleSystemLibs) }) {
+                    Text(if (state.showSystemLibs) "Hide system" else "Show system")
+                }
+            }
+        }
+
+        state.processes.forEach { process ->
+            // The guest's own dex and .so are the point; system libs are noise
+            // unless asked for.
+            val shown = if (state.showSystemLibs) process.artifacts else process.artifacts.filter { it.isGuest }
+            item(key = "head${process.pid}") { ProcessHeader(process, shown.size) }
+            if (shown.isEmpty()) {
+                item(key = "empty${process.pid}") {
+                    Text(
+                        text = "  no guest-owned files mapped yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            items(shown, key = { "${process.pid}${it.path}" }) { artifact ->
+                ArtifactRow(artifact)
+            }
+        }
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+private fun ProcessHeader(process: GuestProcess, shownCount: Int) {
+    Card(modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = process.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                fontFamily = FontFamily.Monospace,
+            )
+            Text(
+                text = "pid ${process.pid}  ·  ${process.dexFiles} dex  ·  ${process.nativeLibs} native libs",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ArtifactRow(artifact: LoadedArtifact) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 8.dp, top = 2.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = when (artifact.kind) {
+                LoadedArtifact.Kind.NATIVE_LIB -> "so"
+                LoadedArtifact.Kind.DEX -> "dex"
+                LoadedArtifact.Kind.APK -> "apk"
+                LoadedArtifact.Kind.OTHER -> "?"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            fontFamily = FontFamily.Monospace,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = artifact.name,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                // Guest artefacts are the interesting ones; system libs are context.
+                color = if (artifact.isGuest) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = artifact.displayDir,
+                style = MaterialTheme.typography.labelSmall,
+                fontFamily = FontFamily.Monospace,
+                maxLines = 1,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsTab(state: ContainerState, onEvent: (ContainerEvent) -> Unit) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Text(
+                "Settings",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(vertical = 16.dp),
+            )
+        }
+        item {
+            SettingRow(
+                title = "Loader window",
+                subtitle = if (state.canDrawOverlay) {
+                    "Floats the mapped-file list over the guest"
+                } else {
+                    "Needs \"Display over other apps\" — MIUI reverts adb grants"
+                },
+                action = if (state.loaderWindowShown) "Hide" else if (state.canDrawOverlay) "Show" else "Grant",
+                onClick = { onEvent(ContainerEvent.ToggleLoaderWindow) },
+            )
+        }
+        item {
+            SettingRow(
+                title = "Show system libraries",
+                subtitle = if (state.showSystemLibs) {
+                    "Process tab lists every mapped file"
+                } else {
+                    "Process tab shows only the guest's own files"
+                },
+                action = if (state.showSystemLibs) "On" else "Off",
+                onClick = { onEvent(ContainerEvent.ToggleSystemLibs) },
+            )
+        }
+        item {
+            SettingRow(
+                title = "Engine",
+                subtitle = "startup=${state.isStartup}  launched=${state.engineLaunched}",
+                action = "Refresh",
+                onClick = { onEvent(ContainerEvent.RefreshProcesses) },
+            )
+        }
+        item {
+            SettingRow(
+                title = "Installed in engine",
+                subtitle = state.installedInEngine.joinToString().ifEmpty { "none" },
+                action = null,
+                onClick = {},
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingRow(title: String, subtitle: String, action: String?, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (action != null) {
+                OutlinedButton(onClick = onClick) { Text(action) }
+            }
+        }
     }
 }

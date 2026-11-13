@@ -14,6 +14,19 @@ data class LoadedArtifact(
 
     /** True when it came out of the container rather than the system image. */
     val isGuest: Boolean get() = path.contains("/virtual/")
+
+    /**
+     * Where it came from, shortened for display. A guest path is long and
+     * mostly the host's private directory, so it is cut back to the container
+     * root -- otherwise "base.apk" reads as if it were the real install.
+     */
+    val displayDir: String
+        get() {
+            val dir = path.substringBeforeLast('/', "")
+            val marker = "/virtual/"
+            val at = dir.indexOf(marker)
+            return if (at >= 0) "container:/" + dir.substring(at + marker.length) else dir
+        }
 }
 
 /**
@@ -62,4 +75,14 @@ object GuestProbe {
             }
             .sortedWith(compareByDescending<LoadedArtifact> { it.isGuest }.thenBy { it.name })
     }
+}
+
+/** A guest process and everything it has mapped. */
+data class GuestProcess(
+    val pid: Int,
+    val name: String,
+    val artifacts: List<LoadedArtifact>,
+) {
+    val nativeLibs: Int get() = artifacts.count { it.kind == LoadedArtifact.Kind.NATIVE_LIB }
+    val dexFiles: Int get() = artifacts.count { it.kind == LoadedArtifact.Kind.DEX }
 }

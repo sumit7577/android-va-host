@@ -10,8 +10,15 @@ import com.lody.virtual.client.core.InstallStrategy
 import com.lody.virtual.client.core.VirtualCore
 import com.lody.virtual.client.ipc.VActivityManager
 import dev.bello.vahost.VaHostApp
+import dev.bello.vahost.core.AppDataStore
+import dev.bello.vahost.core.AppDataStoreManager
 import dev.bello.vahost.core.BaseViewModel
+import dev.bello.vahost.core.DataStoreKeys
 import dev.bello.vahost.overlay.LoaderOverlayService
+import dev.bello.vahost.probe.GuestProbe
+import dev.bello.vahost.probe.GuestProcess
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -22,16 +29,33 @@ import java.io.File
 private const val EMBEDDED_GUEST_PKG = "dev.bello.container.guest"
 private const val USER_ID = 0
 
-class ContainerViewModel(private val app: Application) : BaseViewModel<ContainerEvent, ContainerState>() {
+class ContainerViewModel(
+    private val app: Application,
+    private val dataStore: AppDataStore = AppDataStoreManager(app),
+) : BaseViewModel<ContainerEvent, ContainerState>() {
 
     override fun setInitialState() = ContainerState()
 
     init {
+        restoreSettings()
         viewModelScope.launch {
             awaitEngine()
             refreshEngineStatus()
         }
         onTriggerEvent(ContainerEvent.LoadApps)
+    }
+
+    /**
+     * System libraries outnumber the guest's own files by a few hundred to one,
+     * so the filter stays off unless the user turned it on before.
+     */
+    private fun restoreSettings() = viewModelScope.launch {
+        val raw = runCatching { dataStore.readValue(DataStoreKeys.SHOW_SYSTEM_LIBS) }
+            .onFailure { VaHostApp.note("restoreSettings FAILED ${it.javaClass.name}: ${it.message}") }
+            .getOrNull()
+        VaHostApp.note("restoreSettings read ${DataStoreKeys.SHOW_SYSTEM_LIBS}=$raw")
+        val stored = raw?.toBooleanStrictOrNull() ?: false
+        setState { copy(showSystemLibs = stored) }
     }
 
     override fun onTriggerEvent(event: ContainerEvent) {
@@ -41,6 +65,9 @@ class ContainerViewModel(private val app: Application) : BaseViewModel<Container
             ContainerEvent.RunEmbeddedGuest -> runEmbeddedGuest()
             ContainerEvent.ClearLog -> setState { copy(log = emptyList()) }
             ContainerEvent.ToggleLoaderWindow -> toggleLoaderWindow()
+            is ContainerEvent.SelectTab -> selectTab(event.tab)
+            ContainerEvent.RefreshProcesses -> refreshProcesses()
+            ContainerEvent.ToggleSystemLibs -> toggleSystemLibs()
         }
     }
 
@@ -161,6 +188,37 @@ class ContainerViewModel(private val app: Application) : BaseViewModel<Container
             return
         }
         say("startActivity -> $code  (0 == ok)")
+    }
+
+    /** Polling only runs while the Process tab is on screen. */
+    private var processPoll: Job? = null
+
+    private fun selectTab(tab: ContainerTab) {
+        setState { copy(selectedTab = tab) }
+        processPoll?.cancel()
+        if (tab == ContainerTab.Process) {
+            processPoll = viewModelScope.launch {
+                while (isActive) {
+                    refreshProcesses()
+                    delay(1500)
+                }
+            }
+        }
+    }
+
+    private fun refreshProcesses() = viewModelScope.launch {
+        val found = withContext(Dispatchers.IO) {
+            GuestProbe.guestPids(app.packageName).map { (pid, name) ->
+                GuestProcess(pid, name, GuestProbe.artifacts(pid))
+            }
+        }
+        setState { copy(processes = found) }
+    }
+
+    private fun toggleSystemLibs() = viewModelScope.launch {
+        val next = !state.value.showSystemLibs
+        setState { copy(showSystemLibs = next) }
+        dataStore.setValue(DataStoreKeys.SHOW_SYSTEM_LIBS, next.toString())
     }
 
     private fun toggleLoaderWindow() {

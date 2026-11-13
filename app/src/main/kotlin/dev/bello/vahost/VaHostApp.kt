@@ -14,6 +14,9 @@ import java.io.File
  * before any component exists), then initialize() in onCreate, which dispatches
  * per-process — the engine runs a main, a server and N virtual processes.
  */
+/** lsplant::v2::Init currently hangs on Android 15 + ShadowHook; see below. */
+private const val ENABLE_ART_HOOKING = false
+
 class VaHostApp : Application() {
 
     companion object {
@@ -59,6 +62,14 @@ class VaHostApp : Application() {
             VASettings.ENABLE_INNER_SHORTCUT = false
             VirtualCore.get().startup(base)
             note("startup() OK")
+            // ART hooking is OFF by default. lsplant::v2::Init hangs on this
+            // device: ElfImage resolves all 18579 symbols, then Init blocks
+            // installing its inline hooks and never returns, taking the whole
+            // process with it -- host included, which kills the container.
+            // Opt in explicitly once that is understood; see docs/ENGINE-PLAN.md.
+            if (ENABLE_ART_HOOKING) {
+                com.lody.virtual.client.NativeEngine.initArtHooker()
+            }
             val fails = com.lody.virtual.client.core.InvocationStubManager.getInjectFailures()
             note("stub injection failures: ${fails.size}")
             fails.forEach { note("   X $it") }

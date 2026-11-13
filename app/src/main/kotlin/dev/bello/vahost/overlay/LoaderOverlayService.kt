@@ -16,6 +16,7 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import dev.bello.vahost.probe.GuestProbe
+import dev.bello.vahost.probe.GuestProcess
 import dev.bello.vahost.probe.LoadedArtifact
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,12 +117,6 @@ class LoaderOverlayService : Service() {
         super.onDestroy()
     }
 }
-
-data class GuestProcess(
-    val pid: Int,
-    val name: String,
-    val artifacts: List<LoadedArtifact>,
-)
 
 data class OverlayState(
     val processes: List<GuestProcess> = emptyList(),

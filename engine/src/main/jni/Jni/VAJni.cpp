@@ -6,6 +6,7 @@
 #include <fb/include/fb/ALog.h>
 #include <fb/include/fb/fbjni.h>
 #include "VAJni.h"
+#include <Art/ArtHooker.h>
 
 using namespace facebook::jni;
 
@@ -15,6 +16,15 @@ static void jni_nativeLaunchEngine(alias_ref<jclass> clazz, JArrayClass<jobject>
     hookAndroidVM(javaMethods, packageName, isArt, apiLevel, cameraMethodType);
 }
 
+
+/**
+ * Brings up ART hooking. Reports success rather than throwing: when it is
+ * unavailable the engine still runs, just without hooks for framework methods
+ * that never make a binder call.
+ */
+static jboolean jni_nativeInitArtHooker(alias_ref<jclass>) {
+    return (jboolean) va::InitArtHooker(Environment::current());
+}
 
 static void jni_nativeEnableIORedirect(alias_ref<jclass>, jstring selfSoPath, jint apiLevel,
                                        jint preview_api_level) {
@@ -77,6 +87,8 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
                                          jni_nativeReverseRedirectedPath),
                         makeNativeMethod("nativeLaunchEngine",
                                          jni_nativeLaunchEngine),
+                        makeNativeMethod("nativeInitArtHooker",
+                                         jni_nativeInitArtHooker),
                 }
         );
     });
