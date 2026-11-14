@@ -143,6 +143,50 @@ public class VAppManagerService implements IAppManager {
         return installPackage(path, flags, true);
     }
 
+    /**
+     * Copies the guest's split APKs next to its base and returns the container
+     * paths, or null when the app has none. Native libraries are extracted from
+     * the splits too: a split app usually keeps its .so files in a per-ABI
+     * split rather than the base.
+     */
+    private String[] copySplits(String packageName, File appDir, File libDir) {
+        String[] realSplits;
+        try {
+            android.content.pm.ApplicationInfo real = VirtualCore.get()
+                    .getUnHookPackageManager()
+                    .getApplicationInfo(packageName, 0);
+            realSplits = real.splitSourceDirs;
+        } catch (Throwable t) {
+            return null;
+        }
+        com.lody.virtual.helper.utils.PortLog.w(TAG, "copySplits " + packageName
+                + " realSplits=" + (realSplits == null ? "null" : realSplits.length));
+        if (realSplits == null || realSplits.length == 0) {
+            return null;
+        }
+        java.util.List<String> copied = new java.util.ArrayList<>(realSplits.length);
+        for (String src : realSplits) {
+            if (src == null) {
+                continue;
+            }
+            File source = new File(src);
+            if (!source.isFile()) {
+                continue;
+            }
+            File dst = new File(appDir, source.getName());
+            try {
+                FileUtils.copyFile(source, dst);
+                NativeLibraryHelperCompat.copyNativeBinaries(source, libDir);
+                chmodPackageDictionary(dst);
+                copied.add(dst.getAbsolutePath());
+            } catch (Throwable t) {
+                VLog.w(TAG, "split copy failed for " + source.getName() + ": " + t);
+            }
+        }
+        com.lody.virtual.helper.utils.PortLog.w(TAG, "copySplits copied " + copied.size());
+        return copied.isEmpty() ? null : copied.toArray(new String[0]);
+    }
+
     public synchronized InstallResult installPackage(String path, int flags, boolean notify) {
         long installTime = System.currentTimeMillis();
         if (path == null) {
@@ -226,6 +270,15 @@ public class VAppManagerService implements IAppManager {
             }
             packageFile = privatePackageFile;
         }
+        // Split APKs. The container installs apps that are already installed
+        // on the device, so their real split paths come straight from the host
+        // PackageManager -- no change to the install API is needed. Without
+        // these a split app runs with only its base: missing resources,
+        // missing per-ABI native libs, missing code.
+        String[] splitPaths = null;
+        if (!dependSystem) {
+            splitPaths = copySplits(pkg.packageName, appDir, libDir);
+        }
         if (existOne != null) {
             PackageCacheManager.remove(pkg.packageName);
         }
@@ -238,6 +291,7 @@ public class VAppManagerService implements IAppManager {
         }
         ps.dependSystem = dependSystem;
         ps.apkPath = packageFile.getPath();
+        ps.splitApkPaths = splitPaths;
         ps.libPath = libDir.getPath();
         ps.packageName = pkg.packageName;
         ps.appId = VUserHandle.getAppId(mUidSystem.getOrCreateUid(pkg));

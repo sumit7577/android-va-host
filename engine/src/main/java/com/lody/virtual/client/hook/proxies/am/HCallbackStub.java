@@ -266,7 +266,18 @@ import mirror.android.app.IActivityManager;
                         while (root.getCause() != null) root = root.getCause();
                         PortLog.w(TAG, "bindApplication FAILED " + root
                                 + " @" + (root.getStackTrace().length > 0 ? root.getStackTrace()[0] : "?"));
-                        return true;
+                        // PORT FIX: swallow the transaction (false), never hand it
+                        // on (true). A guest with no Application cannot launch an
+                        // activity: on Android 15 handleLaunchActivity reaches
+                        // ClientTransactionListenerController, which dereferences
+                        // currentApplication(), so passing it through replaced the
+                        // real failure above with a FATAL NullPointerException in
+                        // framework code. Nothing is recoverable here -- the
+                        // process exists only to run this guest -- so end it
+                        // deliberately rather than wait for the next transaction
+                        // to crash it.
+                        android.os.Process.killProcess(android.os.Process.myPid());
+                        return false;
                     }
                     getH().sendMessageAtFrontOfQueue(Message.obtain(msg));
                     return false;

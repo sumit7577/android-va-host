@@ -13,33 +13,52 @@ public class VLog {
 
 	public static boolean OPEN_LOG = true;
 
+	/**
+	 * PORT FIX: these used to call String.format unconditionally, so a message
+	 * carrying a bare '%' -- a guest's exception text, a path, a stack trace --
+	 * threw UnknownFormatConversionException out of the logging call and into
+	 * whatever was trying to report a problem. A message with no arguments is
+	 * now logged as it stands, and a bad format string loses its arguments
+	 * instead of the whole line.
+	 */
+	private static String fmt(String msg, Object... args) {
+		if (args == null || args.length == 0) {
+			return msg;
+		}
+		try {
+			return String.format(msg, args);
+		} catch (Throwable e) {
+			return msg;
+		}
+	}
+
 	public static void i(String tag, String msg, Object... format) {
 		if (OPEN_LOG) {
-			Log.i(tag, String.format(msg, format));
+			Log.i(tag, fmt(msg, format));
 		}
 	}
 
 	public static void d(String tag, String msg, Object... format) {
 		if (OPEN_LOG) {
-			Log.d(tag, String.format(msg, format));
+			Log.d(tag, fmt(msg, format));
 		}
 	}
 
 	public static void w(String tag, String msg, Object... format) {
 		if (OPEN_LOG) {
-			Log.w(tag, String.format(msg, format));
+			Log.w(tag, fmt(msg, format));
 		}
 	}
 
 	public static void e(String tag, String msg, Object... format) {
 		if (OPEN_LOG) {
-			Log.e(tag, String.format(msg, format));
+			Log.e(tag, fmt(msg, format));
 		}
 	}
 
 	public static void v(String tag, String msg, Object... format) {
 		if (OPEN_LOG) {
-			Log.v(tag, String.format(msg, format));
+			Log.v(tag, fmt(msg, format));
 		}
 	}
 

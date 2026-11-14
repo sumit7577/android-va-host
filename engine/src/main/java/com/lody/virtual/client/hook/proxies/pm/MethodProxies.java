@@ -977,6 +977,17 @@ class MethodProxies {
             int userId = VUserHandle.myUserId();
             ApplicationInfo info = VPackageManager.get().getApplicationInfo(pkg, flags, userId);
             if (info != null) {
+                // DIAGNOSTIC: what a guest is told about itself decides whether a
+                // protected one will run, and the fields that matter are the ones
+                // that cannot look like a real install.
+                com.lody.virtual.helper.utils.PortLog.w("GetApplicationInfo",
+                        pkg + " myUid=" + android.os.Process.myUid()
+                                + " flags=0x" + Integer.toHexString(flags)
+                                + " uid=" + info.uid + " appFlags=0x"
+                                + Integer.toHexString(info.flags)
+                                + " src=" + info.sourceDir
+                                + " lib=" + info.nativeLibraryDir
+                                + " data=" + info.dataDir);
                 return info;
             }
             info = (ApplicationInfo) method.invoke(who, args);

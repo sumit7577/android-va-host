@@ -6,6 +6,7 @@ import android.os.Build;
 
 import com.lody.virtual.client.hook.base.BinderInvocationProxy;
 import com.lody.virtual.client.hook.base.ReplaceLastPkgMethodProxy;
+import com.lody.virtual.client.hook.base.ResultStaticMethodProxy;
 
 import mirror.android.app.IUsageStatsManager;
 
@@ -24,6 +25,16 @@ public class UsageStatsManagerStub extends BinderInvocationProxy {
         addMethodProxy(new ReplaceLastPkgMethodProxy("queryUsageStats"));
         addMethodProxy(new ReplaceLastPkgMethodProxy("queryConfigurations"));
         addMethodProxy(new ReplaceLastPkgMethodProxy("queryEvents"));
+        // PORT FIX: getAppStandbyBucket needs GET_USAGE_STATS, which the HOST
+        // does not hold either -- so rewriting the package cannot help, and
+        // unproxied it threw:
+        //   SecurityException: <guest> from uid N not allowed to perform
+        //   GET_USAGE_STATS
+        // killing apps that check their own bucket on startup. Answer with
+        // ACTIVE (10) instead: a guest that is being launched genuinely is
+        // active, so it is the truthful answer as well as the safe one.
+        addMethodProxy(new ResultStaticMethodProxy("getAppStandbyBucket", 10));
+        addMethodProxy(new ResultStaticMethodProxy("isAppInactive", false));
     }
 
 }

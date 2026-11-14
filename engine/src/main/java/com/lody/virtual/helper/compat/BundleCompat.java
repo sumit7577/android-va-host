@@ -33,6 +33,20 @@ public class BundleCompat {
         obtain.writeInt(0);
         obtain.setDataPosition(0);
         Parcel parcel;
+        // PORT FIX: from Android 13 BaseBundle also tracks whether the data was
+        // parcelled by native code, and refuses to unparcel it in Java:
+        //   IllegalStateException at Preconditions.checkState
+        //     at BaseBundle.unparcel -> Activity.restoreHasCurrentPermissionRequest
+        // which killed any activity restored with saved state. The Parcel being
+        // installed below is written here in Java, so the flag is stale by
+        // definition -- clear it with the data it describes.
+        if (BaseBundle.mParcelledByNative != null) {
+            try {
+                BaseBundle.mParcelledByNative.set(bundle, false);
+            } catch (Throwable ignored) {
+                // Absent before API 33; nothing to clear.
+            }
+        }
         if (BaseBundle.TYPE != null) {
             parcel = BaseBundle.mParcelledData.get(bundle);
             if (parcel != null) {

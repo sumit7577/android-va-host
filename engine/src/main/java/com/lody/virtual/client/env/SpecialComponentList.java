@@ -74,19 +74,32 @@ public final class SpecialComponentList {
 
         SPEC_SYSTEM_APP_LIST.add("android");
         SPEC_SYSTEM_APP_LIST.add("com.google.android.webview");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try {
-                String webViewPkgN = IWebViewUpdateService.getCurrentWebViewPackageName.call(WebViewFactory.getUpdateService.call());
-                if (webViewPkgN != null) {
-                    SPEC_SYSTEM_APP_LIST.add(webViewPkgN);
-                }
-            } catch (Throwable e) {
-                e.printStackTrace();
+    }
+
+    /** Resolved on demand, because <clinit> runs before an Application exists. */
+    private static boolean sWebViewProviderResolved;
+
+    private static void resolveWebViewProvider() {
+        if (sWebViewProviderResolved || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            return;
+        }
+        sWebViewProviderResolved = true;
+        try {
+            String pkg = IWebViewUpdateService.getCurrentWebViewPackageName.call(
+                    WebViewFactory.getUpdateService.call());
+            if (pkg != null) {
+                SPEC_SYSTEM_APP_LIST.add(pkg);
             }
+        } catch (Throwable e) {
+            sWebViewProviderResolved = false;
         }
     }
 
     public static boolean isSpecSystemPackage(String pkg) {
+        if (SPEC_SYSTEM_APP_LIST.contains(pkg)) {
+            return true;
+        }
+        resolveWebViewProvider();
         return SPEC_SYSTEM_APP_LIST.contains(pkg);
     }
 

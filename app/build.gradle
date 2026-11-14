@@ -22,6 +22,10 @@ android {
         ndk { abiFilters "armeabi-v7a", "arm64-v8a" }
     }
 
+    // Tested 13-Nov: debuggable false changes nothing for a packed guest -- the
+    // protector declines identically either way -- and it costs `run-as`, so the
+    // PortLog files become unreadable. Kept debuggable; NativeEngine turns
+    // CheckJNI off for guest processes instead.
     buildTypes { debug { debuggable true; minifyEnabled false } }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21

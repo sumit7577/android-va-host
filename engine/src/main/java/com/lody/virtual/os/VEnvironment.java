@@ -22,6 +22,7 @@ public class VEnvironment {
     private static final File DATA_DIRECTORY;
     private static final File USER_DIRECTORY;
     private static final File DALVIK_CACHE_DIRECTORY;
+    private static final File EXTERNAL_STORAGE_DIRECTORY;
 
     static {
         File host = new File(getContext().getApplicationInfo().dataDir);
@@ -33,6 +34,23 @@ public class VEnvironment {
         USER_DIRECTORY = ensureCreated(new File(DATA_DIRECTORY, "user"));
         // Point to: /opt/
         DALVIK_CACHE_DIRECTORY = ensureCreated(new File(ROOT, "opt"));
+        // Point to: /sdcard/ -- the guest's external storage. Scoped storage
+        // hides another package's Android/obb entirely (exists() is false, not
+        // just unreadable), so a guest can never reach the real one; it gets a
+        // container-owned root instead.
+        EXTERNAL_STORAGE_DIRECTORY = ensureCreated(new File(ROOT, "sdcard"));
+    }
+
+    /** Container-owned stand-in for /storage/emulated/0. */
+    public static File getExternalStorageDirectory() {
+        return EXTERNAL_STORAGE_DIRECTORY;
+    }
+
+    /** Where a guest's expansion files have to live to be reachable. */
+    public static File getExternalObbDirectory(String packageName) {
+        File android = ensureCreated(new File(EXTERNAL_STORAGE_DIRECTORY, "Android"));
+        File obb = ensureCreated(new File(android, "obb"));
+        return ensureCreated(new File(obb, packageName));
     }
 
     public static void systemReady() {

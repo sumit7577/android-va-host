@@ -5,6 +5,7 @@ import android.app.Application;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
+import android.view.WindowManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.PersistableBundle;
@@ -69,9 +70,7 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
 
     @Override
     public void callActivityOnCreate(Activity activity, Bundle icicle) {
-        if (icicle != null) {
-            BundleCompat.clearParcelledData(icicle);
-        }
+        icicle = defuse(icicle);
         VirtualCore.get().getComponentDelegate().beforeActivityCreate(activity);
         IBinder token = mirror.android.app.Activity.mToken.get(activity);
         ActivityClientRecord r = VActivityManager.get().getActivityRecord(token);
@@ -91,6 +90,20 @@ public final class AppInstrumentation extends InstrumentationDelegate implements
             if (activity.getRequestedOrientation() == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     && info.screenOrientation != ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) {
                 activity.setRequestedOrientation(info.screenOrientation);
+            }
+            // AMS only ever sees the STUB activity, so the guest's declared
+            // windowSoftInputMode never reaches WindowManager and the window is
+            // left SOFT_INPUT_ADJUST_UNSPECIFIED -- the guest does not get the
+            // pan/resize behaviour its manifest asked for. Theme and
+            // orientation are already carried across here; this belongs with
+            // them.
+            //
+            // NB: this was added while chasing a keyboard that would not open,
+            // and it did NOT fix that -- the IME path is fine (other guests get
+            // a keyboard normally). Kept because propagating the declared mode
+            // is correct on its own, not because it fixes anything.
+            if (info.softInputMode != WindowManager.LayoutParams.SOFT_INPUT_STATE_UNSPECIFIED) {
+                activity.getWindow().setSoftInputMode(info.softInputMode);
             }
         }
         super.callActivityOnCreate(activity, icicle);

@@ -1308,6 +1308,23 @@ class MethodProxies {
     }
 
 
+    /**
+     * PORT FIX: API 30 renamed IActivityManager.registerReceiver to
+     * registerReceiverWithFeature (it carries the attributionTag). Only the old
+     * name was bound, so on current Android the call went out unproxied with
+     * the guest package and came back as
+     *   SecurityException: Given caller package <guest> is not running in
+     *   process ProcessRecord{...}
+     * killing any guest that registers a receiver -- which is most of them.
+     */
+    static class RegisterReceiverWithFeature extends RegisterReceiver {
+
+        @Override
+        public String getMethodName() {
+            return "registerReceiverWithFeature";
+        }
+    }
+
     static class RegisterReceiver extends MethodProxy {
         private static final int IDX_IIntentReceiver = Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH_MR1
                 ? 2
@@ -1330,11 +1347,27 @@ class MethodProxies {
         @Override
         public Object call(Object who, Method method, Object... args) throws Throwable {
             MethodParameterUtils.replaceFirstAppPkg(args);
-            args[IDX_RequiredPermission] = null;
-            IntentFilter filter = (IntentFilter) args[IDX_IntentFilter];
-            SpecialComponentList.protectIntentFilter(filter);
-            if (args.length > IDX_IIntentReceiver && IIntentReceiver.class.isInstance(args[IDX_IIntentReceiver])) {
-                final IInterface old = (IInterface) args[IDX_IIntentReceiver];
+            // PORT FIX: these were fixed offsets, but API 30 inserted
+            // featureId/attributionTag after the package and shifted them all,
+            // so the filter and receiver were read from the wrong slots. Find
+            // them by type instead.
+            int filterIdx = ArrayUtils.indexOfFirst(args, IntentFilter.class);
+            int receiverIdx = ArrayUtils.indexOfFirst(args, IIntentReceiver.class);
+            // The required-permission string sits between the receiver and the
+            // filter; clearing it keeps a guest from being refused on a
+            // permission the host holds instead.
+            if (receiverIdx != -1 && filterIdx != -1) {
+                for (int i = receiverIdx + 1; i < filterIdx; i++) {
+                    if (args[i] instanceof String) {
+                        args[i] = null;
+                    }
+                }
+            }
+            if (filterIdx != -1) {
+                SpecialComponentList.protectIntentFilter((IntentFilter) args[filterIdx]);
+            }
+            if (receiverIdx != -1) {
+                final IInterface old = (IInterface) args[receiverIdx];
                 if (!IIntentReceiverProxy.class.isInstance(old)) {
                     final IBinder token = old.asBinder();
                     if (token != null) {

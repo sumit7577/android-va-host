@@ -7,6 +7,9 @@
 #include <fb/include/fb/fbjni.h>
 #include "VAJni.h"
 #include <Art/ArtHooker.h>
+#include <Art/CheckJni.h>
+#include <Foundation/PathTrace.h>
+#include <Art/JniTrace.h>
 
 using namespace facebook::jni;
 
@@ -24,6 +27,18 @@ static void jni_nativeLaunchEngine(alias_ref<jclass> clazz, JArrayClass<jobject>
  */
 static jboolean jni_nativeInitArtHooker(alias_ref<jclass>) {
     return (jboolean) va::InitArtHooker(Environment::current());
+}
+
+static jboolean jni_nativeStartJniTrace(alias_ref<jclass>) {
+    return (jboolean) va::StartJniTrace(Environment::current());
+}
+
+static jboolean jni_nativeStartPathTrace(alias_ref<jclass>) {
+    return (jboolean) va::StartPathTrace();
+}
+
+static jboolean jni_nativeDisableCheckJni(alias_ref<jclass>) {
+    return (jboolean) va::DisableCheckJni(Environment::current());
 }
 
 static void jni_nativeEnableIORedirect(alias_ref<jclass>, jstring selfSoPath, jint apiLevel,
@@ -89,6 +104,13 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
                                          jni_nativeLaunchEngine),
                         makeNativeMethod("nativeInitArtHooker",
                                          jni_nativeInitArtHooker),
+
+                        makeNativeMethod("nativeDisableCheckJni",
+                                         jni_nativeDisableCheckJni),
+                        makeNativeMethod("nativeStartPathTrace",
+                                         jni_nativeStartPathTrace),
+                        makeNativeMethod("nativeStartJniTrace",
+                                         jni_nativeStartJniTrace),
                 }
         );
     });

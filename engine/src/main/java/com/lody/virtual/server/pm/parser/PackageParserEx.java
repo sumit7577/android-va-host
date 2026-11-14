@@ -234,6 +234,12 @@ public class PackageParserEx {
     public static void initApplicationInfoBase(PackageSetting ps, VPackage p) {
         ApplicationInfo ai = p.applicationInfo;
         ai.flags |= ApplicationInfo.FLAG_HAS_CODE;
+        // Every installed app carries FLAG_INSTALLED; this one is installed, in
+        // this container, for this user. It was missing because the flag is set
+        // by the real PackageManager at install time and nothing here stood in
+        // for that, so a guest asking the ordinary question "am I installed?"
+        // -- which an integrity check asks before it will run -- was told no.
+        ai.flags |= ApplicationInfo.FLAG_INSTALLED;
         if (TextUtils.isEmpty(ai.processName)) {
             ai.processName = ai.packageName;
         }
@@ -244,8 +250,34 @@ public class PackageParserEx {
         ai.publicSourceDir = ps.apkPath;
         ai.sourceDir = ps.apkPath;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            ai.splitSourceDirs = new String[]{ps.apkPath};
-            ai.splitPublicSourceDirs = ai.splitSourceDirs;
+            // Splits must be described consistently or ART walks mismatched
+            // parallel arrays and throws:
+            //   NPE: Attempt to read from null array
+            //     at LoadedApk.registerAppInfoToArt
+            // which returns a null Application and kills the guest before
+            // onCreate. So either advertise the real installed splits with
+            // matching names, or advertise none at all -- never a half-set.
+            String[] splits = ps.splitApkPaths;
+            if (splits != null && splits.length > 0) {
+                ai.splitSourceDirs = splits;
+                ai.splitPublicSourceDirs = splits;
+                String[] names = new String[splits.length];
+                for (int i = 0; i < splits.length; i++) {
+                    String file = new File(splits[i]).getName();
+                    names[i] = file.endsWith(".apk")
+                            ? file.substring(0, file.length() - 4)
+                            : file;
+                }
+                poke(ai, "splitNames", names);
+            } else {
+                ai.splitSourceDirs = null;
+                ai.splitPublicSourceDirs = null;
+                poke(ai, "splitNames", null);
+            }
+            // These two describe inter-split relationships we do not reproduce;
+            // leaving stale values is what produced the mismatch.
+            poke(ai, "splitDependencies", null);
+            poke(ai, "splitClassLoaderNames", null);
             ApplicationInfoL.scanSourceDir.set(ai, ai.dataDir);
             ApplicationInfoL.scanPublicSourceDir.set(ai, ai.dataDir);
             String hostPrimaryCpuAbi = ApplicationInfoL.primaryCpuAbi.get(VirtualCore.get().getContext().getApplicationInfo());

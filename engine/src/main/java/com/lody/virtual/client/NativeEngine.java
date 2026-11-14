@@ -159,6 +159,66 @@ public class NativeEngine {
         return sArtHookerReady;
     }
 
+    private static native boolean nativeDisableCheckJni();
+
+    private static native boolean nativeStartPathTrace();
+
+    private static native boolean nativeStartJniTrace();
+
+    /**
+     * Android turns CheckJNI on for a debuggable app, and a guest runs inside
+     * this host's process, so it inherits it. A guest's native libraries are
+     * release code that was never run under CheckJNI, whose extra signature
+     * checks abort the process rather than return -- so an app that launches
+     * normally dies here for a reason unrelated to being virtualized.
+     */
+    public static boolean disableCheckJni() {
+        boolean off;
+        try {
+            off = nativeDisableCheckJni();
+        } catch (Throwable e) {
+            off = false;
+            VLog.w(TAG, "CheckJNI unchanged: " + e.getMessage());
+        }
+        PortLog.w(TAG, "CheckJNI disabled=" + off);
+        return off;
+    }
+
+    /**
+     * Diagnostic: names the paths a guest's native code asks for and misses.
+     * On arm64 this container does no syscall-level path redirection, so a
+     * guest library that derives its own paths instead of reading the
+     * ApplicationInfo it was given looks somewhere that does not exist.
+     */
+    public static boolean startPathTrace() {
+        boolean on;
+        try {
+            on = nativeStartPathTrace();
+        } catch (Throwable e) {
+            on = false;
+            VLog.w(TAG, "path trace unavailable: " + e.getMessage());
+        }
+        PortLog.w(TAG, "PathTrace started=" + on);
+        return on;
+    }
+
+    /**
+     * Diagnostic: names the JNI lookups a guest's native code makes and misses.
+     * A packer that decides not to run registers nothing and reports nothing,
+     * so the only trace of its decision is the lookup that came back empty.
+     */
+    public static boolean startJniTrace() {
+        boolean on;
+        try {
+            on = nativeStartJniTrace();
+        } catch (Throwable e) {
+            on = false;
+            VLog.w(TAG, "jni trace unavailable: " + e.getMessage());
+        }
+        PortLog.w(TAG, "JniTrace started=" + on);
+        return on;
+    }
+
     static void launchEngine() {
         if (sFlag) {
             return;

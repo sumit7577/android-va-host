@@ -50,11 +50,8 @@ class ContainerViewModel(
      * so the filter stays off unless the user turned it on before.
      */
     private fun restoreSettings() = viewModelScope.launch {
-        val raw = runCatching { dataStore.readValue(DataStoreKeys.SHOW_SYSTEM_LIBS) }
-            .onFailure { VaHostApp.note("restoreSettings FAILED ${it.javaClass.name}: ${it.message}") }
-            .getOrNull()
-        VaHostApp.note("restoreSettings read ${DataStoreKeys.SHOW_SYSTEM_LIBS}=$raw")
-        val stored = raw?.toBooleanStrictOrNull() ?: false
+        val stored = runCatching { dataStore.readValue(DataStoreKeys.SHOW_SYSTEM_LIBS) }
+            .getOrNull()?.toBooleanStrictOrNull() ?: false
         setState { copy(showSystemLibs = stored) }
     }
 
@@ -112,11 +109,9 @@ class ContainerViewModel(
                 say("--- $pkg ---")
                 say("sourceDir = ${ai.sourceDir}")
                 if (splits > 0) {
-                    say(
-                        "WARNING: $splits split APKs. installPackage() takes the base " +
-                        "only, so split resources and per-ABI native libs are missing."
-                    )
+                    say("$splits split APKs — the engine copies these in alongside the base")
                 }
+                importObbIfStaged(pkg)
                 installThenLaunch(ai.sourceDir, pkg)
             } catch (t: Throwable) {
                 say("runApp FAILED ${t.javaClass.name}: ${t.message}")
@@ -167,6 +162,35 @@ class ContainerViewModel(
         }
         say("engine NOT ready after ${timeoutMs}ms")
         return false
+    }
+
+    // Scoped storage hides another package's Android/obb from everything --
+    // exists() is false, and all-files access excludes Android/obb outright --
+    // so an OBB has to be staged somewhere readable and copied in. Staging dir:
+    // Download/vahost-obb/<package>/ , which is also how a real installer would
+    // take an OBB alongside the APK.
+    private fun importObbIfStaged(pkg: String) {
+        val downloads = android.os.Environment.getExternalStoragePublicDirectory(
+            android.os.Environment.DIRECTORY_DOWNLOADS
+        )
+        val staged = File(downloads, "vahost-obb/" + pkg)
+        val sources = staged.listFiles(java.io.FileFilter { it.isFile && it.name.endsWith(".obb") })
+        if (sources == null || sources.isEmpty()) {
+            return
+        }
+        val target = com.lody.virtual.os.VEnvironment.getExternalObbDirectory(pkg)
+        for (src in sources) {
+            val dst = File(target, src.name)
+            // Size match is enough: an OBB is immutable once published.
+            if (dst.exists() && dst.length() == src.length()) {
+                say("obb already present: " + dst.name)
+                continue
+            }
+            runCatching {
+                src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o) } }
+                say("obb imported: " + dst.name + " (" + dst.length() + " bytes)")
+            }.onFailure { say("obb import FAILED " + src.name + ": " + it.message) }
+        }
     }
 
     private fun installThenLaunch(apkPath: String, pkg: String) {

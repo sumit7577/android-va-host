@@ -21,11 +21,14 @@ LOCAL_SRC_FILES := Jni/VAJni.cpp \
 				   Foundation/SymbolFinder.cpp \
 				   Foundation/Path.cpp \
 				   Foundation/SandboxFs.cpp \
+				   Foundation/PathTrace.cpp \
 				   Art/ElfImage.cpp \
 				   xz/xz_crc32.c \
 				   xz/xz_dec_lzma2.c \
 				   xz/xz_dec_stream.c \
 				   Art/ArtHooker.cpp \
+				   Art/CheckJni.cpp \
+				   Art/JniTrace.cpp \
 				   Substrate/hde64.c \
                    Substrate/SubstrateDebug.cpp \
                    Substrate/SubstrateHook.cpp \

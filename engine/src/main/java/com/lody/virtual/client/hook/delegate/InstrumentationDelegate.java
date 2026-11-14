@@ -51,6 +51,26 @@ public class InstrumentationDelegate extends Instrumentation {
 
 	@Override
 	public boolean onException(Object obj, Throwable e) {
+		// PORT FIX: LoadedApk.makeApplicationInner catches a failure to
+		// construct the guest's Application and asks the Instrumentation what
+		// to do. Returning true there swallows it and leaves the Application
+		// null, so the engine then calls onCreate() on null and the real cause
+		// -- whatever actually broke in the app's constructor -- is lost. Log
+		// it before delegating; this is often the only record of it.
+		com.lody.virtual.helper.utils.PortLog.w("Instrumentation",
+				"onException on " + (obj == null ? "null" : obj.getClass().getName())
+						+ ": " + e);
+		for (Throwable c = e; c != null; c = c.getCause()) {
+			StackTraceElement[] st = c.getStackTrace();
+			StringBuilder sb = new StringBuilder("  cause: ").append(c);
+			for (int i = 0; i < Math.min(8, st.length); i++) {
+				sb.append("\n    at ").append(st[i]);
+			}
+			com.lody.virtual.helper.utils.PortLog.w("Instrumentation", sb.toString());
+			if (c.getCause() == c) {
+				break;
+			}
+		}
 		return base.onException(obj, e);
 	}
 
@@ -255,27 +275,55 @@ public class InstrumentationDelegate extends Instrumentation {
 		base.callActivityOnDestroy(activity);
 	}
 
+	/**
+	 * Saved state restored inside a container can be unreadable: the framework
+	 * refuses to unparcel a Bundle it believes came from native code, and it
+	 * reads that Bundle from several places before any app code runs --
+	 * performCreate, onRestoreInstanceState, onPostCreate. Each throws
+	 *   IllegalStateException at BaseBundle.unparcel
+	 * and kills the activity. Defuse it here, at the one point every path goes
+	 * through; losing saved state is a far better failure than not starting.
+	 */
+	protected static Bundle defuse(Bundle state) {
+		if (state == null) {
+			return null;
+		}
+		try {
+			com.lody.virtual.helper.compat.BundleCompat.clearParcelledData(state);
+		} catch (Throwable ignored) {
+			// Fall through to the readability check.
+		}
+		try {
+			state.keySet(); // forces unparcel; throws here, not inside the framework
+			return state;
+		} catch (Throwable t) {
+			com.lody.virtual.helper.utils.PortLog.w("Instrumentation",
+					"saved state unreadable, dropping it: " + t);
+			return new Bundle();
+		}
+	}
+
 	@Override
 	public void callActivityOnRestoreInstanceState(Activity activity, Bundle savedInstanceState) {
-		base.callActivityOnRestoreInstanceState(activity, savedInstanceState);
+		base.callActivityOnRestoreInstanceState(activity, defuse(savedInstanceState));
 	}
 
 	@TargetApi(Build.VERSION_CODES.LOLLIPOP)
 	@Override
 	public void callActivityOnRestoreInstanceState(Activity activity, Bundle savedInstanceState,
 			PersistableBundle persistentState) {
-		base.callActivityOnRestoreInstanceState(activity, savedInstanceState, persistentState);
+		base.callActivityOnRestoreInstanceState(activity, defuse(savedInstanceState), persistentState);
 	}
 
 	@Override
 	public void callActivityOnPostCreate(Activity activity, Bundle icicle) {
-		base.callActivityOnPostCreate(activity, icicle);
+		base.callActivityOnPostCreate(activity, defuse(icicle));
 	}
 
 	@TargetApi(Build.VERSION_CODES.LOLLIPOP)
 	@Override
 	public void callActivityOnPostCreate(Activity activity, Bundle icicle, PersistableBundle persistentState) {
-		base.callActivityOnPostCreate(activity, icicle, persistentState);
+		base.callActivityOnPostCreate(activity, defuse(icicle), persistentState);
 	}
 
 	@Override

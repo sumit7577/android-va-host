@@ -264,6 +264,11 @@ public final class VClientImpl extends IVClient.Stub {
             startIOUniformer();
         }
         NativeEngine.launchEngine();
+        // Before any guest code runs: the guest's native libs load during
+        // Application construction below, and CheckJNI would abort on them.
+        NativeEngine.disableCheckJni();
+        NativeEngine.startPathTrace();
+        NativeEngine.startJniTrace();
         // ART hooking is NOT started here. bindApplication runs on the main
         // thread inside a binder-dispatched EXECUTE_TRANSACTION, and LSPlant's
         // Init suspends threads and takes ART locks to install its inline
@@ -361,23 +366,57 @@ public final class VClientImpl extends IVClient.Stub {
          * field does not resolve). Unresolved. The retry below is therefore
          * load-bearing, not defensive -- do not "simplify" it away.
          */
+        // PORT FIX: a stub process has already created the HOST's Application,
+        // which installed a network-security config. Creating the guest's
+        // Application in the same process installs a second one and the merge
+        // fails:
+        //   RuntimeException: Found multiple conflicting per-domain rules
+        //     at NetworkSecurityConfigProvider.handleNewApplication
+        //     at LoadedApk.makeApplicationInner
+        // That is caught inside makeApplicationInner, so it surfaces only as a
+        // null Application. Clear the cached config so the guest's own is
+        // installed cleanly.
+        try {
+            Class<?> appConfig = Class.forName("android.security.net.config.ApplicationConfig");
+            java.lang.reflect.Field sInstance = appConfig.getDeclaredField("sInstance");
+            sInstance.setAccessible(true);
+            sInstance.set(null, null);
+        } catch (Throwable t) {
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl",
+                    "could not reset network security config: " + t);
+        }
+
         String madeVia = "none";
         try {
             mInitialApplication = LoadedApk.makeApplication.call(data.info, false, null);
             madeVia = "makeApplication";
         } catch (Throwable t) {
-            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplication threw: " + t);
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", describe("makeApplication threw", t));
         }
         if (mInitialApplication == null && LoadedApk.makeApplicationInner != null) {
             try {
                 mInitialApplication = LoadedApk.makeApplicationInner.call(data.info, false, null);
                 madeVia = "makeApplicationInner";
             } catch (Throwable t) {
-                com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplicationInner threw: " + t);
+                com.lody.virtual.helper.utils.PortLog.w("VClientImpl",
+                        describe("makeApplicationInner threw", t));
             }
         }
         com.lody.virtual.helper.utils.PortLog.w("VClientImpl", "makeApplication via " + madeVia
                 + " -> " + (mInitialApplication == null ? "NULL" : mInitialApplication.getClass().getName()));
+        if (mInitialApplication == null) {
+            // PORT FIX: stop at the actual failure. Carrying on with a null
+            // Application bought a cascade of NullPointerExceptions thrown from
+            // framework code, none of which names the cause: installProvider
+            // dereferences the context once per provider, callApplicationOnCreate
+            // dereferences the application, and then the first activity launch
+            // dies inside ClientTransactionListenerController because
+            // currentApplication() is null. The reason the Application could not
+            // be built is in the makeApplication log above this line.
+            throw new RuntimeException("Unable to create application "
+                    + data.appInfo.className + " of " + data.appInfo.packageName
+                    + ": LoadedApk produced no Application (cause logged above)");
+        }
         mirror.android.app.ActivityThread.mInitialApplication.set(mainThread, mInitialApplication);
         ContextFixer.fixContext(mInitialApplication);
         if (Build.VERSION.SDK_INT >= 24 && "com.tencent.mm:recovery".equals(processName)) {
@@ -405,18 +444,8 @@ public final class VClientImpl extends IVClient.Stub {
             // PORT FIX: this handler dereferenced mInitialApplication, which is
             // null precisely when makeApplication() failed -- so the real
             // exception was masked by an NPE thrown from the error path itself.
-            StringBuilder sb = new StringBuilder("makeApplication FAILED: ");
-            Throwable t = e;
-            int depth = 0;
-            while (t != null && depth < 4) {
-                sb.append(depth == 0 ? "" : " <- caused by ")
-                  .append(t.getClass().getName()).append(": ").append(t.getMessage());
-                StackTraceElement[] st = t.getStackTrace();
-                for (int i = 0; i < Math.min(24, st.length); i++) sb.append("\n    at ").append(st[i]);
-                t = t.getCause();
-                depth++;
-            }
-            com.lody.virtual.helper.utils.PortLog.w("VClientImpl", sb.toString());
+            com.lody.virtual.helper.utils.PortLog.w("VClientImpl",
+                    describe("Application.onCreate FAILED", e));
             if (mInitialApplication == null || !mInstrumentation.onException(mInitialApplication, e)) {
                 throw new RuntimeException("Unable to create application "
                         + (mInitialApplication == null ? "<null>" : mInitialApplication.getClass().getName())
@@ -425,6 +454,29 @@ public final class VClientImpl extends IVClient.Stub {
         }
         VActivityManager.get().appDoneExecuting();
         VirtualCore.get().getComponentDelegate().afterApplicationCreate(mInitialApplication);
+    }
+
+    /**
+     * A throwable with its causes and frames in one log line. The engine's
+     * failures arrive wrapped (InvocationTargetException around whatever the
+     * guest's own class loading threw), so the top-level toString() is almost
+     * never the reason.
+     */
+    private static String describe(String what, Throwable e) {
+        StringBuilder sb = new StringBuilder(what).append(": ");
+        Throwable t = e;
+        int depth = 0;
+        while (t != null && depth < 4) {
+            sb.append(depth == 0 ? "" : " <- caused by ")
+              .append(t.getClass().getName()).append(": ").append(t.getMessage());
+            StackTraceElement[] st = t.getStackTrace();
+            for (int i = 0; i < Math.min(24, st.length); i++) {
+                sb.append("\n    at ").append(st[i]);
+            }
+            t = t.getCause();
+            depth++;
+        }
+        return sb.toString();
     }
 
     private void fixWeChatRecovery(Application app) {

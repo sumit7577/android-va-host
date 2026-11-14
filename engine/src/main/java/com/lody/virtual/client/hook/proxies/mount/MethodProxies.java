@@ -8,6 +8,10 @@ import com.lody.virtual.client.hook.utils.MethodParameterUtils;
 import java.io.File;
 import java.lang.reflect.Method;
 
+import com.lody.virtual.os.VEnvironment;
+
+import mirror.android.os.storage.StorageVolume;
+
 /**
  * @author Lody
  */
@@ -46,8 +50,41 @@ class MethodProxies {
             return super.beforeCall(who, method, args);
         }
 
+        /**
+         * Environment builds its external-storage roots from these volumes, and
+         * getObbDir()/getExternalFilesDir() are built from those roots. Pointing
+         * them at container storage is the only way a guest reaches its own
+         * expansion files: scoped storage hides another package's
+         * Android/obb outright, so the real path reports exists()==false even
+         * with all-files access, which Android 11+ explicitly excludes for
+         * Android/data and Android/obb.
+         *
+         * Consequence: a guest sees an EMPTY external storage, not the device's
+         * shared media. For a container that is the correct trade -- it is the
+         * isolation the whole thing is for -- but it does mean a guest cannot
+         * see real photos or downloads.
+         */
         @Override
         public Object afterCall(Object who, Method method, Object[] args, Object result) throws Throwable {
+            if (result == null || !isAppProcess()) {
+                return result;
+            }
+            File root = VEnvironment.getExternalStorageDirectory();
+            int count = java.lang.reflect.Array.getLength(result);
+            for (int i = 0; i < count; i++) {
+                Object volume = java.lang.reflect.Array.get(result, i);
+                if (volume == null) {
+                    continue;
+                }
+                // Both fields are final, hence the reflective rewrite; either
+                // may be absent depending on API level.
+                if (StorageVolume.mPath != null) {
+                    StorageVolume.mPath.set(volume, root);
+                }
+                if (StorageVolume.mInternalPath != null) {
+                    StorageVolume.mInternalPath.set(volume, root);
+                }
+            }
             return result;
         }
     }

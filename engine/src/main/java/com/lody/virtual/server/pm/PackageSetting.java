@@ -26,6 +26,12 @@ public class PackageSetting implements Parcelable {
     private static final PackageUserState DEFAULT_USER_STATE = new PackageUserState();
     public String packageName;
     public String apkPath;
+    /**
+     * Container copies of the guest's split APKs, or null for a single-APK app.
+     * Over half the apps on a typical device ship splits, and installing only
+     * the base leaves their resources, per-ABI native libs and code missing.
+     */
+    public String[] splitApkPaths;
     public String libPath;
     public boolean dependSystem;
     @Deprecated
@@ -41,6 +47,7 @@ public class PackageSetting implements Parcelable {
     protected PackageSetting(Parcel in) {
         this.packageName = in.readString();
         this.apkPath = in.readString();
+        this.splitApkPaths = in.createStringArray();
         this.libPath = in.readString();
         this.dependSystem = in.readByte() != 0;
         this.appId = in.readInt();
@@ -90,6 +97,7 @@ public class PackageSetting implements Parcelable {
     public void writeToParcel(Parcel dest, int flags) {
         dest.writeString(this.packageName);
         dest.writeString(this.apkPath);
+        dest.writeStringArray(this.splitApkPaths);
         dest.writeString(this.libPath);
         dest.writeByte(this.dependSystem ? (byte) 1 : (byte) 0);
         dest.writeInt(this.appId);
